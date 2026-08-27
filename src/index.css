@@ -32,6 +32,77 @@
   --editor-bg: #1e1e1e;
   --panel-bg: #1e1e1e;
   --titlebar-bg: #323233;
+
+  --workbench-bg: #18181b;
+  --workbench-sidebar: #18181b;
+  --workbench-editor: #1e1e1e;
+  --workbench-panel: #18181b;
+  --workbench-border: #27272a;
+}
+
+:root[data-color-theme='vscode-dark'] {
+  --bg-primary: #1f1f1f;
+  --bg-secondary: #181818;
+  --bg-tertiary: #2b2b2b;
+  --bg-hover: #2a2d2e;
+  --bg-active: #37373d;
+  --bg-selection: #264f78;
+  --border-color: #2b2b2b;
+  --border-active: #0078d4;
+  --text-primary: #cccccc;
+  --text-secondary: #9d9d9d;
+  --text-muted: #737373;
+  --text-accent: #4daafc;
+  --accent-blue: #0078d4;
+  --status-bar-bg: #181818;
+  --activity-bar-bg: #181818;
+  --sidebar-bg: #181818;
+  --editor-bg: #1f1f1f;
+  --panel-bg: #181818;
+  --titlebar-bg: #181818;
+  --workbench-bg: #181818;
+  --workbench-sidebar: #181818;
+  --workbench-editor: #1f1f1f;
+  --workbench-panel: #181818;
+  --workbench-border: #2b2b2b;
+}
+
+:root[data-color-theme='light'] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f3f3f3;
+  --bg-tertiary: #e8e8e8;
+  --bg-hover: #e4e6f1;
+  --border-color: #d4d4d4;
+  --text-primary: #3b3b3b;
+  --text-secondary: #616161;
+  --text-muted: #767676;
+  --workbench-bg: #f3f3f3;
+  --workbench-sidebar: #f3f3f3;
+  --workbench-editor: #ffffff;
+  --workbench-panel: #f8f8f8;
+  --workbench-border: #d4d4d4;
+}
+
+.workbench-shell {
+  background-color: var(--workbench-bg);
+  color: var(--text-primary);
+}
+
+.workbench-titlebar,
+.workbench-activity,
+.workbench-sidebar,
+.workbench-statusbar {
+  background-color: var(--workbench-sidebar);
+  border-color: var(--workbench-border);
+}
+
+.workbench-editor {
+  background-color: var(--workbench-editor);
+}
+
+.workbench-panel {
+  background-color: var(--workbench-panel);
+  border-color: var(--workbench-border);
 }
 
 * {
@@ -224,6 +295,36 @@ body {
 
 .animate-pulse-slow {
   animation: pulse 2s ease-in-out infinite;
+}
+
+/* Lightweight Agent Mode activity: animate the status text only. */
+@keyframes agent-status-shimmer {
+  0% {
+    background-position: 200% 50%;
+  }
+
+  100% {
+    background-position: -200% 50%;
+  }
+}
+
+.agent-status-shimmer {
+  color: transparent;
+  background-image: linear-gradient(90deg, #71717a 18%, #e4e4e7 48%, #38bdf8 58%, #71717a 82%);
+  background-size: 220% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: agent-status-shimmer 1.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-status-shimmer {
+    animation: none;
+    background: none;
+    color: #a1a1aa;
+    -webkit-text-fill-color: currentColor;
+  }
 }
 
 /* Breadcrumbs */

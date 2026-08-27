@@ -12,13 +12,13 @@ import { CPP_TEMPLATES } from '../services/cppService';
 import OnyxCodeLogo from './OnyxCodeLogo';
 
 interface WelcomeTabProps {
-  onNewFile: () => void;
-  onOpenFile: () => void;
-  onOpenFolder: () => void;
-  onOpenRecentFolder: (path: string) => void;
-  onStartCppProject: (templateId?: string) => void;
-  onStartPythonProject: () => void;
-  onOpenAIWorkspace: () => void;
+  onNewFile: () => Promise<unknown> | void;
+  onOpenFile: () => Promise<unknown> | void;
+  onOpenFolder: () => Promise<unknown> | void;
+  onOpenRecentFolder: (path: string) => Promise<unknown> | void;
+  onStartCppProject: (templateId?: string) => Promise<unknown> | void;
+  onStartPythonProject: () => Promise<unknown> | void;
+  onOpenAIWorkspace: () => Promise<unknown> | void;
 }
 
 export default function WelcomeTab({
@@ -31,6 +31,7 @@ export default function WelcomeTab({
   onOpenAIWorkspace,
 }: WelcomeTabProps) {
   const [recents, setRecents] = useState<RecentWorkspace[]>([]);
+  const [openingRecentPath, setOpeningRecentPath] = useState<string | null>(null);
 
   useEffect(() => {
     window.fileSystem?.getRecentWorkspaces?.().then(setRecents).catch(() => setRecents([]));
@@ -41,6 +42,16 @@ export default function WelcomeTab({
     { label: 'Open file', detail: 'Edit a file from your computer', icon: Terminal, onClick: onOpenFile },
     { label: 'Open folder', detail: 'Load a complete workspace', icon: FolderOpen, onClick: onOpenFolder },
   ];
+
+  const openRecentWorkspace = async (path: string) => {
+    if (openingRecentPath) return;
+    setOpeningRecentPath(path);
+    try {
+      await onOpenRecentFolder(path);
+    } finally {
+      setOpeningRecentPath(null);
+    }
+  };
 
   return (
     <div className="h-full w-full overflow-y-auto bg-[#1e1e1e] text-[#cccccc] select-none">
@@ -65,7 +76,7 @@ export default function WelcomeTab({
           </div>
           <button
             type="button"
-            onClick={onOpenAIWorkspace}
+            onClick={() => void onOpenAIWorkspace()}
             className="group flex shrink-0 items-center gap-2 self-start rounded-lg border border-violet-400/20 bg-violet-400/10 px-3.5 py-2 text-xs font-medium text-violet-200 transition-colors hover:border-violet-400/40 hover:bg-violet-400/15"
           >
             <Cpu size={14} />
@@ -82,7 +93,7 @@ export default function WelcomeTab({
                 <button
                   type="button"
                   key={action.label}
-                  onClick={action.onClick}
+                  onClick={() => void action.onClick()}
                   className="group flex items-center gap-3 rounded-lg border border-[#303034] bg-[#242426] px-3.5 py-3 text-left transition-all hover:-translate-y-px hover:border-sky-400/35 hover:bg-[#29292c]"
                 >
                   <span className="flex h-8 w-8 items-center justify-center rounded-md bg-[#1b1b1d] text-sky-400">
@@ -108,7 +119,7 @@ export default function WelcomeTab({
                 <div className="flex min-h-[138px] flex-col items-center justify-center text-center">
                   <FolderOpen size={22} className="mb-2 text-[#5f5f68]" />
                   <p className="text-xs text-[#8b8b94]">No recent workspaces yet</p>
-                  <button type="button" onClick={onOpenFolder} className="mt-1 text-[11px] text-sky-400 hover:text-sky-300">
+                  <button type="button" onClick={() => void onOpenFolder()} className="mt-1 text-[11px] text-sky-400 hover:text-sky-300">
                     Open your first folder
                   </button>
                 </div>
@@ -117,12 +128,18 @@ export default function WelcomeTab({
                   <button
                     type="button"
                     key={item.path}
-                    onClick={() => onOpenRecentFolder(item.path)}
-                    className="group flex w-full items-center gap-3 rounded-md px-3 py-2 text-left hover:bg-[#2a2a2d]"
+                    onClick={() => void openRecentWorkspace(item.path)}
+                    disabled={openingRecentPath !== null}
+                    aria-busy={openingRecentPath === item.path}
+                    className={`group flex w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-colors disabled:cursor-wait ${
+                      openingRecentPath === item.path ? 'bg-[#2a2a2d]' : 'hover:bg-[#2a2a2d]'
+                    }`}
                   >
                     <FolderOpen size={14} className="shrink-0 text-sky-400/80" />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-medium text-[#d8d8dc] group-hover:text-white">{item.name}</span>
+                      <span className="block truncate text-xs font-medium text-[#d8d8dc] group-hover:text-white">
+                        {openingRecentPath === item.path ? `Opening ${item.name}` : item.name}
+                      </span>
                       <span className="block truncate text-[10px] text-[#6f6f78]">{item.path}</span>
                     </span>
                   </button>
@@ -147,12 +164,12 @@ export default function WelcomeTab({
                 <span className="mt-1 block text-[10px] leading-4 text-[#777780]">{template.description}</span>
               </button>
             ))}
-            <button type="button" onClick={onStartPythonProject} className="rounded-lg border border-[#303034] bg-[#242426] p-3 text-left transition-colors hover:border-amber-400/35 hover:bg-[#29292c]">
+            <button type="button" onClick={() => void onStartPythonProject()} className="rounded-lg border border-[#303034] bg-[#242426] p-3 text-left transition-colors hover:border-amber-400/35 hover:bg-[#29292c]">
               <Terminal size={15} className="mb-2 text-amber-300" />
               <span className="block text-xs font-medium text-white">Python starter</span>
               <span className="mt-1 block text-[10px] leading-4 text-[#777780]">Open a clean executable Python entry point.</span>
             </button>
-            <button type="button" onClick={onOpenAIWorkspace} className="rounded-lg border border-[#303034] bg-[#242426] p-3 text-left transition-colors hover:border-violet-400/35 hover:bg-[#29292c]">
+            <button type="button" onClick={() => void onOpenAIWorkspace()} className="rounded-lg border border-[#303034] bg-[#242426] p-3 text-left transition-colors hover:border-violet-400/35 hover:bg-[#29292c]">
               <Cpu size={15} className="mb-2 text-violet-300" />
               <span className="block text-xs font-medium text-white">Ollama workspace</span>
               <span className="mt-1 block text-[10px] leading-4 text-[#777780]">Discover installed models and start a local chat.</span>

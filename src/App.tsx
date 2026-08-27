@@ -72,7 +72,7 @@ export default function App() {
   const [outputLines, setOutputLines] = useState<RunOutputEvent[]>([]);
   const [runStatus, setRunStatus] = useState<RunStatusEvent['state']>('idle');
   const [diagnostics, setDiagnostics] = useState<DiagnosticItem[]>([]);
-  const [gitBranch, setGitBranch] = useState('wym_dev');
+  const [gitBranch, setGitBranch] = useState<string | null>(null);
   const [isWorkspaceTrusted, setIsWorkspaceTrusted] = useState(false);
   const [trustRequest, setTrustRequest] = useState<{ path: string; kind: 'file' | 'folder' } | null>(null);
   const trustResolver = useRef<((decision: WorkspaceTrustDecision) => void) | null>(null);
@@ -114,9 +114,9 @@ export default function App() {
   const refreshGitBranch = useCallback(async () => {
     try {
       const branch = await window.git?.branch?.();
-      setGitBranch(branch || 'main');
+      setGitBranch(branch || null);
     } catch {
-      setGitBranch('main');
+      setGitBranch(null);
     }
   }, []);
 
@@ -149,7 +149,17 @@ export default function App() {
   }, [refreshGitBranch]);
 
   useEffect(() => {
-    document.documentElement.classList.toggle('light', settings.theme === 'light');
+    const media = window.matchMedia('(prefers-color-scheme: light)');
+    const applyTheme = () => {
+      const resolvedTheme = settings.theme === 'system'
+        ? media.matches ? 'light' : 'dark'
+        : settings.theme;
+      document.documentElement.dataset.colorTheme = resolvedTheme;
+      document.documentElement.classList.toggle('light', resolvedTheme === 'light');
+    };
+    applyTheme();
+    media.addEventListener?.('change', applyTheme);
+    return () => media.removeEventListener?.('change', applyTheme);
   }, [settings.theme]);
 
   useEffect(() => {
@@ -167,10 +177,14 @@ export default function App() {
   // otherwise every restart drops you back on the Welcome tab with nothing open.
   useEffect(() => {
     const restoreLastWorkspace = async () => {
-      const recents = await window.fileSystem?.getRecentWorkspaces?.();
-      const lastWorkspace = recents?.[0];
-      if (lastWorkspace?.path) {
-        await handleOpenFolder(lastWorkspace.path, { silent: true });
+      try {
+        const recents = await window.fileSystem?.getRecentWorkspaces?.();
+        const lastWorkspace = recents?.[0];
+        if (lastWorkspace?.path) {
+          await handleOpenFolder(lastWorkspace.path, { silent: true });
+        }
+      } catch (error) {
+        console.warn('Unable to restore the last workspace:', error);
       }
     };
     restoreLastWorkspace();
@@ -224,29 +238,32 @@ export default function App() {
     });
   }, []);
 
-  const handleOpenFolder = async (folderPath?: string, options?: { silent?: boolean }) => {
-    let selectedPath = folderPath;
+  const handleOpenFolder = async (folderPath?: string, options?: { silent?: boolean }): Promise<boolean> => {
+    let selectedPath = typeof folderPath === 'string' ? folderPath : undefined;
     if (!selectedPath) {
       selectedPath = (await window.fileSystem?.openFolderDialog()) || undefined;
     }
     if (!selectedPath) {
-      return;
+      return false;
     }
 
-    const trustDecision = await requestTrustDecision(selectedPath, 'folder');
-    if (trustDecision === 'cancel') return;
-    const trusted = trustDecision === 'trusted';
-
-    setRootPath(selectedPath);
-    setIsWorkspaceTrusted(trusted);
-    setSearchQuery('');
-    setActiveView('explorer');
-    setShowSidebar(true);
+    let trusted = isRememberedTrusted(selectedPath);
+    if (!options?.silent && !trusted) {
+      const trustDecision = await requestTrustDecision(selectedPath, 'folder');
+      if (trustDecision === 'cancel') return false;
+      trusted = trustDecision === 'trusted';
+    }
 
     try {
-      await window.fileSystem?.setWorkspaceRoot?.(selectedPath);
+      const normalizedPath = await window.fileSystem?.setWorkspaceRoot?.(selectedPath);
       const files = await window.fileSystem?.readDirectory(selectedPath);
+      setRootPath(normalizedPath || selectedPath);
       setFileTree(files ?? []);
+      setIsWorkspaceTrusted(trusted);
+      setSearchQuery('');
+      setActiveView('explorer');
+      setShowSidebar(true);
+      setIsWelcomeOpen(false);
     } catch (error) {
       setFileTree([]);
       if (options?.silent) {
@@ -254,17 +271,19 @@ export default function App() {
         // a popup if it's since been moved/deleted - just fall back to Welcome.
         setRootPath(null);
         setIsWorkspaceTrusted(false);
-        return;
+        return false;
       }
       alert(
         `Could not read "${selectedPath}": ${
           error instanceof Error ? error.message : 'Unknown error'
         }`
       );
+      return false;
     }
 
     await window.fileSystem?.addRecentWorkspace?.(selectedPath);
     await refreshGitBranch();
+    return true;
   };
 
   const handleOpenFile = async () => {
@@ -303,7 +322,9 @@ export default function App() {
       return true;
     }
 
-    const fileName = requestedPath ?? prompt('Enter relative file path (e.g. main.cpp, src/solution.cpp)');
+    const fileName = typeof requestedPath === 'string'
+      ? requestedPath
+      : prompt('Enter relative file path (e.g. main.cpp, src/solution.cpp)');
     if (!fileName) {
       return false;
     }
@@ -326,7 +347,9 @@ export default function App() {
       return false;
     }
 
-    const folderName = requestedPath ?? prompt('Enter relative folder path');
+    const folderName = typeof requestedPath === 'string'
+      ? requestedPath
+      : prompt('Enter relative folder path');
     if (!folderName) {
       return false;
     }
@@ -707,6 +730,60 @@ export default function App() {
   };
 
   useEffect(() => {
+    return window.electronAPI?.onMenuCommand?.((command) => {
+      switch (command) {
+        case 'new-file': void handleCreateFile(); break;
+        case 'open-file': void handleOpenFile(); break;
+        case 'open-folder': void handleOpenFolder(); break;
+        case 'save': void handleFileSave(); break;
+        case 'save-as': void handleSaveAs(); break;
+        case 'save-all': void handleSaveAll(); break;
+        case 'close-file':
+          if (openFiles.length > 0) handleFileClose(activeFileIndex);
+          else setIsWelcomeOpen(false);
+          break;
+        case 'find': handleFind(); break;
+        case 'replace': handleReplace(); break;
+        case 'command-palette':
+        case 'go-to-file': setCommandPaletteOpen(true); break;
+        case 'toggle-sidebar': setShowSidebar((current) => !current); break;
+        case 'search-project': handleSearchInProject(); break;
+        case 'show-problems':
+          setOutputVisible(true);
+          setActiveBottomTab('problems');
+          break;
+        case 'show-output':
+          setOutputVisible(true);
+          setActiveBottomTab('output');
+          break;
+        case 'show-terminal': handleNewTerminal(); break;
+        case 'toggle-ai': setShowAIPanel((current) => !current); break;
+        case 'go-to-line': handleGoToLine(); break;
+        case 'run': void handleRunCode(); break;
+        case 'build': void handleBuildCpp(); break;
+        case 'stop': void handleStopExecution(); break;
+        case 'restart': void handleRestartExecution(); break;
+        case 'split-terminal': handleSplitTerminal(); break;
+        case 'documentation':
+          void window.electronAPI?.openExternalLink('https://code.visualstudio.com/docs');
+          break;
+        case 'keyboard-shortcuts': setCommandPaletteOpen(true); break;
+        case 'report-issue': setSettingsOpen(true); break;
+        case 'about': alert(DEFAULT_ABOUT); break;
+      }
+    });
+  }, [
+    activeFile,
+    activeFileIndex,
+    isWelcomeOpen,
+    isWorkspaceTrusted,
+    openFiles,
+    outputVisible,
+    rootPath,
+    searchQuery,
+  ]);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const mod = event.ctrlKey || event.metaKey;
       if (mod && event.shiftKey && event.key.toLowerCase() === 'p') {
@@ -791,19 +868,24 @@ export default function App() {
   };
 
   const currentWorkspaceName = rootPath ? rootPath.split(/[\\/]/).pop() : 'virgoai';
+  const windowTitle = `${activeFile?.name || 'Welcome'} — ${currentWorkspaceName}`;
+
+  useEffect(() => {
+    document.title = windowTitle;
+  }, [windowTitle]);
 
   return (
     <div
-      className="flex h-screen w-screen flex-col overflow-hidden bg-[#18181b] font-sans"
+      className="workbench-shell flex h-screen w-screen flex-col overflow-hidden bg-[#18181b] font-sans"
       onMouseMove={resize}
       onMouseUp={() => setIsResizing(false)}
     >
       {/* Title Bar matching screenshot */}
       <TitleBar
         workspaceName={currentWorkspaceName}
-        onNewFile={handleCreateFile}
+        onNewFile={() => void handleCreateFile()}
         onOpenFile={handleOpenFile}
-        onOpenFolder={handleOpenFolder}
+        onOpenFolder={() => void handleOpenFolder()}
         onSave={handleFileSave}
         onSaveAll={handleSaveAll}
         onSaveAs={handleSaveAs}
@@ -888,7 +970,7 @@ export default function App() {
               setIsWelcomeOpen(false);
             }}
             onFileClose={handleFileClose}
-            onOpenFolder={handleOpenFolder}
+            onOpenFolder={() => void handleOpenFolder()}
             onRefresh={() => refreshFileTree()}
             onCreateFile={handleCreateFile}
             onCreateFolder={handleCreateFolder}
@@ -932,10 +1014,10 @@ export default function App() {
           isWelcomeOpen={isWelcomeOpen}
           onCloseWelcome={() => setIsWelcomeOpen(false)}
           onSelectWelcome={() => setIsWelcomeOpen(true)}
-          onNewFile={handleCreateFile}
+          onNewFile={() => handleCreateFile()}
           onOpenFile={handleOpenFile}
-          onOpenFolder={handleOpenFolder}
-          onOpenRecentFolder={handleOpenFolder}
+          onOpenFolder={() => handleOpenFolder()}
+          onOpenRecentFolder={(path) => handleOpenFolder(path)}
           onStartCppProject={handleStartCppProject}
           onStartPythonProject={handleStartPythonProject}
           onOpenAIWorkspace={() => setShowAIPanel(true)}
@@ -985,9 +1067,9 @@ export default function App() {
       <CommandPalette
         isOpen={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
-        onOpenFolder={handleOpenFolder}
+        onOpenFolder={() => void handleOpenFolder()}
         onOpenFile={handleOpenFile}
-        onNewFile={handleCreateFile}
+        onNewFile={() => void handleCreateFile()}
         onSave={handleFileSave}
         onToggleSettings={() => setSettingsOpen(true)}
         onRunCode={handleRunCode}

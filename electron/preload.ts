@@ -32,6 +32,12 @@ interface QuestionPaperSearchFilters {
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  platform: process.platform,
+  onMenuCommand: (callback: (command: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, command: string) => callback(command);
+    ipcRenderer.on('menu-command', listener);
+    return () => ipcRenderer.removeListener('menu-command', listener);
+  },
   minimize: () => ipcRenderer.send('window-minimize'),
   maximize: () => ipcRenderer.send('window-maximize'),
   close: () => ipcRenderer.send('window-close'),
@@ -116,6 +122,10 @@ contextBridge.exposeInMainWorld('git', {
   branch: () => ipcRenderer.invoke('git-branch'),
   add: (file: string) => ipcRenderer.invoke('git-add', file),
   commit: (message: string) => ipcRenderer.invoke('git-commit', message),
+});
+
+contextBridge.exposeInMainWorld('profile', {
+  local: () => ipcRenderer.invoke('local-profile'),
 });
 
 contextBridge.exposeInMainWorld('appConfig', {

@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { diffLines } from 'diff';
-import { FilePlus, FileEdit, FileMinus, FileDiff } from 'lucide-react';
+import { ChevronDown, FilePlus, FileEdit, FileMinus, FileDiff, RotateCcw } from 'lucide-react';
 import { PendingFileChange } from '../services/agentLoop';
 
 interface PendingChangesBarProps {
@@ -10,6 +10,7 @@ interface PendingChangesBarProps {
 }
 
 export default function PendingChangesBar({ changes, onAcceptAll, onRejectAll }: PendingChangesBarProps) {
+  const [isReviewOpen, setIsReviewOpen] = useState(false);
   const changesList = useMemo(() => Array.from(changes.values()), [changes]);
 
   const calculateStats = (original: string | null, current: string | null) => {
@@ -29,60 +30,102 @@ export default function PendingChangesBar({ changes, onAcceptAll, onRejectAll }:
     return { added, removed };
   };
 
+  const fileStats = useMemo(
+    () => changesList.map((change) => ({
+      change,
+      stats: calculateStats(change.originalContent, change.currentContent),
+    })),
+    [changesList]
+  );
+  const totalStats = useMemo(
+    () => fileStats.reduce(
+      (total, entry) => ({
+        added: total.added + entry.stats.added,
+        removed: total.removed + entry.stats.removed,
+      }),
+      { added: 0, removed: 0 }
+    ),
+    [fileStats]
+  );
+
   if (changesList.length === 0) return null;
 
+  const firstChangeName = changesList[0].path.split(/[/\\]/).pop() || changesList[0].path;
+  const title = changesList.length === 1
+    ? `${changesList[0].type === 'create' ? 'Created' : changesList[0].type === 'delete' ? 'Deleted' : 'Edited'} ${firstChangeName}`
+    : `${changesList.length} files changed`;
+
   return (
-    <div className="flex flex-col border-t border-[#2a2a32] bg-[#1a1a1f] text-xs">
-      <div className="flex items-center justify-between p-3 border-b border-[#2a2a32]">
-        <div>
-          <div className="flex items-center gap-2 text-[#cccccc] font-medium">
-            <FileDiff size={14} className="text-[#3b82f6]" />
-            <span>{changesList.length} Files With Changes</span>
-          </div>
-          <p className="mt-0.5 text-[10px] text-[#6f7192]">
-            Already written to disk. Accept to keep them, or Reject to undo.
-          </p>
+    <div className="overflow-hidden rounded-xl border border-[#303033] bg-[#1a1a1a] text-xs">
+      <div className="flex min-h-[64px] items-center gap-3 px-4 py-3">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[#3a3a3d] text-[#a1a1a6]">
+          <FileDiff size={14} />
         </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-medium text-[#d4d4d8]">{title}</div>
+          <div className="mt-0.5 flex items-center gap-1.5 font-mono text-[10.5px]">
+            {totalStats.added > 0 && <span className="text-emerald-400">+{totalStats.added}</span>}
+            {totalStats.removed > 0 && <span className="text-rose-400">-{totalStats.removed}</span>}
+          </div>
+        </div>
+
         <div className="flex items-center gap-2">
           <button
             onClick={onRejectAll}
-            className="px-3 py-1 text-[#8b91aa] hover:text-white transition-colors"
+            className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[11.5px] text-[#b5b5ba] transition-colors hover:bg-[#252525] hover:text-white"
+            title="Undo all pending file changes"
           >
-            Reject all
+            <span>Undo</span>
+            <RotateCcw size={12} />
           </button>
           <button
-            onClick={onAcceptAll}
-            className="rounded bg-[#3b82f6] px-3 py-1 text-white hover:bg-[#2563eb] transition-colors"
+            onClick={() => setIsReviewOpen((open) => !open)}
+            className="flex h-8 items-center gap-1.5 rounded-lg border border-[#3a3a3d] px-3 text-[11.5px] text-[#b5b5ba] transition-colors hover:bg-[#252525] hover:text-white"
+            aria-expanded={isReviewOpen}
           >
-            Accept all
+            <span>Review</span>
+            <ChevronDown size={12} className={`transition-transform ${isReviewOpen ? 'rotate-180' : ''}`} />
           </button>
         </div>
       </div>
 
-      <div className="max-h-48 overflow-y-auto p-2">
-        {changesList.map((change) => {
-          const stats = calculateStats(change.originalContent, change.currentContent);
-          const name = change.path.split(/[/\\]/).pop();
+      {isReviewOpen && (
+        <div className="border-t border-[#303033] px-3 py-2.5">
+          <div className="max-h-48 space-y-0.5 overflow-y-auto">
+            {fileStats.map(({ change, stats }) => {
+              const name = change.path.split(/[/\\]/).pop();
 
-          return (
-            <div key={change.path} className="flex items-center gap-3 px-2 py-1.5 hover:bg-[#25252b] rounded">
-              {change.type === 'create' && <FilePlus size={14} className="text-green-500 shrink-0" />}
-              {change.type === 'edit' && <FileEdit size={14} className="text-blue-400 shrink-0" />}
-              {change.type === 'delete' && <FileMinus size={14} className="text-red-500 shrink-0" />}
-              
-              <div className="flex items-center gap-2 w-16 shrink-0 font-mono text-[10px]">
-                {stats.added > 0 && <span className="text-green-500">+{stats.added}</span>}
-                {stats.removed > 0 && <span className="text-red-500">-{stats.removed}</span>}
-              </div>
+              return (
+                <div key={change.path} className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-[#252525]">
+                  {change.type === 'create' && <FilePlus size={14} className="shrink-0 text-emerald-400" />}
+                  {change.type === 'edit' && <FileEdit size={14} className="shrink-0 text-sky-400" />}
+                  {change.type === 'delete' && <FileMinus size={14} className="shrink-0 text-rose-400" />}
 
-              <div className="flex-1 truncate">
-                <span className="font-medium text-[#cccccc] mr-2">{name}</span>
-                <span className="text-[10px] text-[#6f7192]">{change.path}</span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+                  <div className="min-w-0 flex-1 truncate">
+                    <span className="mr-2 font-medium text-[#cccccc]">{name}</span>
+                    <span className="text-[10px] text-[#71717a]">{change.path}</span>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-2 font-mono text-[10px]">
+                    {stats.added > 0 && <span className="text-emerald-400">+{stats.added}</span>}
+                    {stats.removed > 0 && <span className="text-rose-400">-{stats.removed}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-2 flex justify-end border-t border-[#292929] pt-2.5">
+            <button
+              onClick={onAcceptAll}
+              className="rounded-lg bg-[#2f2f32] px-3 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-[#3a3a3d]"
+            >
+              Keep changes
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

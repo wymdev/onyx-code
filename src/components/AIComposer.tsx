@@ -59,13 +59,13 @@ export default function AIComposer({
     full: 'Full access',
   };
   return (
-    <div className="p-2.5 bg-[#18181b] border-t border-[#27272a] font-sans">
+    <div className="bg-[#18181b] px-3 pb-3 pt-2 font-sans">
       <form
         onSubmit={(e) => {
           e.preventDefault();
           onSubmit();
         }}
-        className="relative flex flex-col rounded-md border border-[#27272a] bg-[#1e1e1e] p-2.5 transition-colors focus-within:border-[#007acc]"
+        className="relative flex min-h-[130px] flex-col rounded-[20px] border border-[#343434] bg-[#1d1d1d] p-3 shadow-sm transition-colors focus-within:border-[#525252]"
       >
         {/* Input Textarea */}
         <textarea
@@ -82,13 +82,13 @@ export default function AIComposer({
               ? 'Instruct agent to build features, refactor code, or run commands...'
               : 'Ask a question, request code, or explain concepts...'
           }
-          rows={3}
+          rows={4}
           disabled={isLoading}
-          className="w-full resize-none bg-transparent text-xs text-[#cccccc] outline-none placeholder:text-[#6e6e6e] font-sans leading-relaxed"
+          className="w-full flex-1 resize-none bg-transparent text-xs leading-relaxed text-[#cccccc] outline-none placeholder:text-[#656565] font-sans"
         />
 
         {/* Toolbar Controls */}
-        <div className="mt-2 flex items-center justify-between border-t border-[#27272a] pt-2 text-xs">
+        <div className="mt-3 flex items-center justify-between border-t border-[#292929] pt-2.5 text-xs">
           {/* Left: Model & Mode Selection */}
           <div className="flex items-center gap-1.5 flex-wrap">
             {/* Custom model menu avoids the native bright-blue OS select. */}

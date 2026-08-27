@@ -298,7 +298,7 @@ export default function Sidebar({
   };
 
   return (
-    <div className="relative flex shrink-0 flex-col overflow-hidden border-r border-[#27272a] bg-[#18181b] font-sans text-xs select-none" style={{ width }}>
+    <div className="workbench-sidebar relative flex shrink-0 flex-col overflow-hidden border-r border-[#27272a] bg-[#18181b] font-sans text-xs select-none" style={{ width }}>
       {/* View Title */}
       {activeView === 'explorer' && (
         <div className="flex h-9 items-center justify-between px-3 text-[11px] font-semibold uppercase tracking-wider text-[#bbbbbb]">

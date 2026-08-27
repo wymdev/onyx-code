@@ -4,7 +4,7 @@ export interface AppSettings {
     wordWrap: boolean;
     tabSize: number;
     lineNumbers: boolean;
-    theme: 'dark' | 'light' | 'system';
+    theme: 'dark' | 'vscode-dark' | 'light' | 'system';
     fontSize: number;
     fontFamily: string;
 }

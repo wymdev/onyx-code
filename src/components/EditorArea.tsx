@@ -191,7 +191,7 @@ export default function EditorArea({
   const hasTabs = isWelcomeOpen || openFiles.length > 0;
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden bg-[#1e1e1e] font-sans">
+    <div className="workbench-editor flex flex-1 flex-col overflow-hidden bg-[#1e1e1e] font-sans">
       {/* VS Code Tab Bar */}
       {hasTabs && (
         <div className="flex h-9 items-center justify-between border-b border-[#252526] bg-[#252526] select-none">

@@ -1,6 +1,15 @@
 import './polyfills';
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  MenuItemConstructorOptions,
+  shell,
+} from 'electron';
 import * as path from 'path';
+import * as os from 'os';
 import { pathToFileURL } from 'url';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
@@ -22,6 +31,8 @@ dotenv.config({ path: path.join(process.cwd(), '.env') });
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
+
+app.setName('Onyx Code');
 
 const isDev = !app.isPackaged;
 
@@ -78,6 +89,13 @@ function assertWorkspacePath(targetPath: string) {
 
   if (!isPathInsideRoot(resolved, currentWorkspaceRoot)) {
     throw new Error(`Access denied: "${targetPath}" is outside the open workspace.`);
+  }
+}
+
+function assertDeletableWorkspaceChild(targetPath: string) {
+  assertWorkspacePath(targetPath);
+  if (currentWorkspaceRoot && normalizePath(targetPath) === normalizePath(currentWorkspaceRoot)) {
+    throw new Error('The open workspace root cannot be deleted. Delete its child files and folders instead.');
   }
 }
 
@@ -796,13 +814,13 @@ function setupFileSystemHandlers() {
   });
 
   ipcMain.handle('delete-file', async (_, filePath: string) => {
-    assertWorkspacePath(filePath);
+    assertDeletableWorkspaceChild(filePath);
     await fs.unlink(filePath);
     return true;
   });
 
   ipcMain.handle('delete-folder', async (_, dirPath: string) => {
-    assertWorkspacePath(dirPath);
+    assertDeletableWorkspaceChild(dirPath);
     await fs.rm(dirPath, { recursive: true, force: true });
     return true;
   });
@@ -865,9 +883,13 @@ function setupRunHandlers() {
 
     try {
       const { stdout, stderr } = await execAsync(command, { cwd: currentWorkspaceRoot });
-      return { stdout, stderr };
+      return { stdout, stderr, exitCode: 0 };
     } catch (error: any) {
-      return { stdout: error.stdout || '', stderr: error.stderr || error.message };
+      return {
+        stdout: error.stdout || '',
+        stderr: error.stderr || error.message,
+        exitCode: typeof error.code === 'number' ? error.code : 1,
+      };
     }
   });
 }
@@ -975,12 +997,12 @@ function setupGitHandlers() {
     }
   });
   ipcMain.handle('git-branch', async () => {
-    if (!currentWorkspaceRoot) return 'main';
+    if (!currentWorkspaceRoot) return null;
     try {
       const { stdout } = await execAsync('git branch --show-current', { cwd: currentWorkspaceRoot });
-      return stdout.trim() || 'main';
+      return stdout.trim() || null;
     } catch {
-      return 'main';
+      return null;
     }
   });
   ipcMain.handle('git-add', async (_event, file: string) => {
@@ -990,6 +1012,35 @@ function setupGitHandlers() {
   ipcMain.handle('git-commit', async (_event, message: string) => {
     if (!currentWorkspaceRoot) return;
     await execFileAsync('git', ['commit', '-m', message], { cwd: currentWorkspaceRoot });
+  });
+}
+
+function setupIdentityHandlers() {
+  ipcMain.handle('local-profile', async () => {
+    const account = os.userInfo();
+    let gitName = '';
+    let gitEmail = '';
+
+    try {
+      const { stdout } = await execFileAsync('git', ['config', '--global', '--get', 'user.name']);
+      gitName = stdout.trim();
+    } catch {
+      // Git identity is optional; the macOS account remains the source of truth.
+    }
+
+    try {
+      const { stdout } = await execFileAsync('git', ['config', '--global', '--get', 'user.email']);
+      gitEmail = stdout.trim();
+    } catch {
+      // Git identity is optional.
+    }
+
+    return {
+      username: account.username,
+      displayName: gitName || account.username,
+      email: gitEmail || null,
+      homeDirectory: account.homedir,
+    };
   });
 }
 
@@ -1202,6 +1253,7 @@ function initializeHandlers() {
   setupShellHandlers();
   setupTerminalHandlers();
   setupGitHandlers();
+  setupIdentityHandlers();
   setupConfigHandlers();
   setupPluginHandlers({
     userDataPath: app.getPath('userData'),
@@ -1219,14 +1271,149 @@ function initializeHandlers() {
   handlersInitialized = true;
 }
 
+function sendMenuCommand(command: string) {
+  BrowserWindow.getFocusedWindow()?.webContents.send('menu-command', command);
+}
+
+function setupMacApplicationMenu() {
+  if (process.platform !== 'darwin') return;
+
+  const command = (label: string, menuCommand: string, accelerator?: string): MenuItemConstructorOptions => ({
+    label,
+    accelerator,
+    click: () => sendMenuCommand(menuCommand),
+  });
+
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: app.name,
+      submenu: [
+        command(`About ${app.name}`, 'about'),
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    },
+    {
+      label: 'File',
+      submenu: [
+        command('New File', 'new-file', 'CmdOrCtrl+N'),
+        { label: 'New Window', accelerator: 'CmdOrCtrl+Shift+N', click: () => openNewWindow() },
+        { type: 'separator' },
+        command('Open File…', 'open-file', 'CmdOrCtrl+O'),
+        command('Open Folder…', 'open-folder', 'CmdOrCtrl+Shift+O'),
+        { type: 'separator' },
+        command('Save', 'save', 'CmdOrCtrl+S'),
+        command('Save As…', 'save-as', 'CmdOrCtrl+Shift+S'),
+        command('Save All', 'save-all', 'CmdOrCtrl+Alt+S'),
+        { type: 'separator' },
+        command('Close Editor', 'close-file', 'CmdOrCtrl+W'),
+      ],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+        { type: 'separator' },
+        command('Find', 'find', 'CmdOrCtrl+F'),
+        command('Replace', 'replace', 'CmdOrCtrl+Alt+F'),
+      ],
+    },
+    {
+      label: 'Selection',
+      submenu: [{ role: 'selectAll' }],
+    },
+    {
+      label: 'View',
+      submenu: [
+        command('Command Palette…', 'command-palette', 'CmdOrCtrl+Shift+P'),
+        { type: 'separator' },
+        command('Explorer', 'toggle-sidebar', 'CmdOrCtrl+B'),
+        command('Search', 'search-project', 'CmdOrCtrl+Shift+F'),
+        command('Problems', 'show-problems', 'CmdOrCtrl+Shift+M'),
+        command('Output', 'show-output'),
+        command('Terminal', 'show-terminal', 'Ctrl+`'),
+        command('Local AI Assistant', 'toggle-ai', 'CmdOrCtrl+Shift+A'),
+        { type: 'separator' },
+        { role: 'reload' },
+        ...(isDev ? [{ role: 'toggleDevTools' as const }] : []),
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    {
+      label: 'Go',
+      submenu: [
+        command('Go to File…', 'go-to-file', 'CmdOrCtrl+P'),
+        command('Go to Line…', 'go-to-line', 'CmdOrCtrl+G'),
+      ],
+    },
+    {
+      label: 'Run',
+      submenu: [
+        command('Run Active File', 'run', 'F5'),
+        command('Build C++ File', 'build', 'CmdOrCtrl+Shift+B'),
+        command('Stop Execution', 'stop', 'Shift+F5'),
+        command('Restart Execution', 'restart', 'CmdOrCtrl+Shift+F5'),
+      ],
+    },
+    {
+      label: 'Terminal',
+      submenu: [
+        command('New Terminal', 'show-terminal', 'Ctrl+`'),
+        command('Split Terminal', 'split-terminal', 'CmdOrCtrl+Shift+5'),
+      ],
+    },
+    { role: 'windowMenu' },
+    {
+      role: 'help',
+      submenu: [
+        command('Documentation', 'documentation'),
+        command('Keyboard Shortcuts', 'keyboard-shortcuts', 'CmdOrCtrl+K CmdOrCtrl+S'),
+        { type: 'separator' },
+        command('Report Issue', 'report-issue'),
+      ],
+    },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 function createBrowserWindow(): BrowserWindow {
+  const windowChromeOptions = process.platform === 'darwin'
+    ? {
+        // macOS owns both the window title strip and the global application menu.
+        // The renderer hides its custom title bar on this platform to avoid a
+        // duplicate File/Edit toolbar below the native one.
+        frame: true,
+        titleBarStyle: 'default' as const,
+      }
+    : {
+        // Windows and Linux use the controls rendered by TitleBar.
+        frame: false,
+      };
+
   const win = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    frame: false,
-    titleBarStyle: 'hidden',
+    ...windowChromeOptions,
     backgroundColor: '#0e0e11',
     icon: path.join(__dirname, '../public/icon.png'),
     webPreferences: {
@@ -1282,6 +1469,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  setupMacApplicationMenu();
   try {
     initDatabase();
   } catch (error) {

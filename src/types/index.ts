@@ -98,6 +98,8 @@ export interface RunStatusEvent {
 declare global {
   interface Window {
     electronAPI?: {
+      platform: NodeJS.Platform;
+      onMenuCommand: (callback: (command: string) => void) => () => void;
       minimize: () => void;
       maximize: () => void;
       close: () => void;
@@ -143,7 +145,7 @@ declare global {
       onRunOutput: (callback: (payload: RunOutputEvent) => void) => () => void;
       onRunStatus: (callback: (payload: RunStatusEvent) => void) => () => void;
       onDiagnostics?: (callback: (diagnostics: DiagnosticItem[]) => void) => () => void;
-      runTerminalCommand: (command: string) => Promise<{ stdout: string; stderr: string }>;
+      runTerminalCommand: (command: string) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
       getTerminalProfiles?: () => Promise<Array<{ id: 'powershell' | 'cmd' | 'gitbash'; label: string; available: boolean }>>;
       createTerminal?: (payload: { id: string; profile: 'powershell' | 'cmd' | 'gitbash'; cols?: number; rows?: number }) => void;
       onTerminalData?: (callback: (payload: { id: string; data: string }) => void) => () => void;
@@ -156,7 +158,15 @@ declare global {
       status: () => Promise<string>;
       add: (file: string) => Promise<void>;
       commit: (message: string) => Promise<void>;
-      branch?: () => Promise<string>;
+      branch?: () => Promise<string | null>;
+    };
+    profile?: {
+      local: () => Promise<{
+        username: string;
+        displayName: string;
+        email: string | null;
+        homeDirectory: string;
+      }>;
     };
     appConfig?: {
       setOllamaHost: (url: string) => Promise<boolean>;

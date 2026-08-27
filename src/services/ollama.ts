@@ -369,15 +369,21 @@ export const AGENT_SYSTEM_PROMPT = `You are an autonomous coding agent working i
 
 You have tools to read, search, edit, and create files in the user's project, and to run shell commands. All file paths you pass to tools MUST be relative to the workspace root (e.g. "src/App.tsx"), never absolute, never with a drive letter.
 
+The newest user message is authoritative. Earlier messages are context only: never continue an old file path, directory, or task when the newest request names a different target. When the user says "this folder", "current folder", "project root", or "workspace root", use a root-relative filename such as "index.html". Do not invent a subdirectory. Do not create a directory unless the newest request explicitly names it or the requested target path requires it.
+
 Workflow rules:
 1. Before editing a file you have not seen in this conversation, use list_directory and/or read_file to understand it. Do not guess file contents or assume a file's structure.
 2. Prefer edit_file for any file that already exists - it makes one precise, minimal replacement. Only use write_file for brand-new files or when a file genuinely needs a full rewrite. old_text in edit_file must match the file's current content exactly (including whitespace/indentation) and must be unique in the file - include enough surrounding lines to make it unique.
 3. For multi-step tasks, call update_task_list early with your plan, then call it again to update item statuses ('pending' -> 'in_progress' -> 'done') as you progress.
 4. Use run_command for installing packages, running builds/tests, or git operations. It runs in the workspace root.
+   Do not use run_command to create folders before write_file; write_file creates required parent folders automatically.
 5. Make ONE tool call at a time and wait for its result before deciding the next step. Do not call multiple tools in the same turn.
-6. When the entire user request is fully done, call task_complete with a short summary. Do not call it early - only when nothing is left to do.
+6. When the entire user request is fully done, call task_complete with a concise Markdown summary. Lead with the outcome, then use short bullets for important changes and verification when useful. Do not include raw tool JSON, repetitive narration, or invented details. Do not call it early - only when nothing is left to do.
 7. File writes, edits, deletions, and terminal commands require explicit user permission from Onyx Code. If permission is denied, do not repeat or disguise the same action; explain what remains blocked or choose a safe read-only alternative.
 8. Never rerun an identical command after it succeeded unless a file or dependency changed and rerunning it is necessary to verify that new state. Treat a duplicate-command tool result as authoritative and move to the next distinct step or finish.
+9. Never delete the workspace root itself. To clear a workspace, first call list_directory with ".", then delete each listed root child with delete_file or delete_directory. Use delete_directory only for a named child directory, never ".". Do not use run_command, rm, rmdir, or unlink to bypass these deletion safeguards.
+10. A run_command result with a non-zero exit code is a failure even if the process produced output. Diagnose that result and choose a corrected action; never mark the related task done after a failed command. In particular, do not assume a package's older initialization command still exists after installing its latest version.
+11. If edit_file reports that old_text did not match, use the current file content included in the tool result and construct a new exact, unique replacement. Never retry identical edit_file arguments, and do not repeatedly search for text that the tool already confirmed is absent.
 
 Be direct. Don't narrate steps in prose - let the tool calls do the work. Only write plain text when asking the user a clarifying question, or in your final task_complete summary.`;
 
@@ -468,7 +474,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'delete_file',
-      description: 'Delete a file from the workspace.',
+      description: 'Delete one file from the workspace. This cannot delete a directory or the workspace root.',
       parameters: {
         type: 'object',
         properties: {
@@ -481,9 +487,24 @@ export const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'delete_directory',
+      description:
+        'Recursively delete one named child directory and its contents. Never pass "." or the workspace root. To clear the workspace, list "." first and delete each returned child separately.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Named directory path relative to the workspace root, e.g. admin or src/legacy' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'run_command',
       description:
-        'Run a shell command in the workspace root directory (e.g. npm install <pkg>, npm run build, git status). Returns stdout and stderr.',
+        'Run a shell command in the workspace root directory (e.g. npm install <pkg>, npm run build, git status). Returns stdout, stderr, and an authoritative exit code. A non-zero exit code means the command failed.',
       parameters: {
         type: 'object',
         properties: {
@@ -523,11 +544,11 @@ export const AGENT_TOOLS = [
     function: {
       name: 'task_complete',
       description:
-        'Call exactly once when the entire user request has been fully completed, to end the session. Provide a short summary of what was done.',
+        'Call exactly once when the entire user request has been fully completed, to end the session. Provide a concise, well-structured Markdown summary of the outcome, important changes, and verification.',
       parameters: {
         type: 'object',
         properties: {
-          summary: { type: 'string', description: 'Short summary of what was done' },
+          summary: { type: 'string', description: 'Concise Markdown summary of the outcome, important changes, and verification' },
         },
         required: ['summary'],
       },
@@ -552,10 +573,31 @@ export async function chatWithTools(
     signal,
   });
 
-  if (response.status === 400) {
-    const fallbackMessages = [...messages];
+  const nativeToolError = (() => {
+    if (response.ok) return false;
+    try {
+      const error = String(JSON.parse(response.body)?.error || '');
+      return /tool|function|json|object|argument|closing|parse|support/i.test(error);
+    } catch {
+      return response.status === 400;
+    }
+  })();
+
+  if (response.status === 400 || nativeToolError) {
+    const fallbackMessages = messages.map((message) => {
+      if (message.role === 'assistant' && message.tool_calls?.length) {
+        return {
+          role: 'assistant' as const,
+          content: message.content || JSON.stringify({
+            name: message.tool_calls[0].function.name,
+            arguments: message.tool_calls[0].function.arguments,
+          }),
+        };
+      }
+      return { role: message.role, content: message.content };
+    });
     if (fallbackMessages[0]?.role === 'system') {
-      fallbackMessages[0].content += `\n\nAVAILABLE TOOLS:\nYou must use tools by outputting raw JSON in this format: {"name": "tool_name", "arguments": {"arg1": "value"}}\n${JSON.stringify(
+      fallbackMessages[0].content += `\n\nNATIVE TOOL CALLING IS UNAVAILABLE FOR THIS RESPONSE.\nUse exactly one tool by returning only one complete JSON object with no Markdown fence and no prose: {"name":"tool_name","arguments":{"arg1":"value"}}\nNever truncate the JSON. Keep file edits focused so the arguments fit in one response.\n\nAVAILABLE TOOLS:\n${JSON.stringify(
         AGENT_TOOLS,
         null,
         2
@@ -567,6 +609,7 @@ export async function chatWithTools(
       body: {
         model,
         messages: fallbackMessages,
+        format: 'json',
         stream: false,
         options: { temperature: 0.1 },
       },

@@ -17,7 +17,7 @@ interface StatusBarProps {
   settings?: AppSettings;
   diagnostics?: DiagnosticItem[];
   onToggleProblems?: () => void;
-  branchName?: string;
+  branchName?: string | null;
   onRefreshGit?: () => void;
   onOpenOllamaSettings?: () => void;
   onOpenPreview?: () => void;
@@ -30,7 +30,7 @@ export default function StatusBar({
   settings,
   diagnostics = [],
   onToggleProblems,
-  branchName = 'wym_dev',
+  branchName,
   onRefreshGit,
   onOpenOllamaSettings,
   onOpenPreview,
@@ -92,19 +92,22 @@ export default function StatusBar({
     activeFile?.name.endsWith('.h');
 
   return (
-    <div className="flex h-6 w-full items-center justify-between border-t border-[#252526] bg-[#18181b] px-2 text-[11px] text-[#858585] font-sans select-none">
+    <div className="workbench-statusbar flex h-6 w-full items-center justify-between border-t border-[#252526] bg-[#18181b] px-2 text-[11px] text-[#858585] font-sans select-none">
       {/* Left items */}
       <div className="flex items-center h-full">
         {/* Git Branch */}
-        <div
-          onClick={onRefreshGit}
-          className="flex h-full items-center gap-1 px-2 text-[#cccccc] hover:bg-[#27272a] cursor-pointer"
-          title="Git Current Branch (Click to refresh)"
-        >
-          <GitBranch size={12} className="text-[#38bdf8]" />
-          <span>{branchName}</span>
-          <RefreshCw size={10} className="ml-1 text-[#858585] hover:text-white" />
-        </div>
+        {branchName && (
+          <button
+            type="button"
+            onClick={onRefreshGit}
+            className="flex h-full items-center gap-1 px-2 text-[#cccccc] hover:bg-[#27272a]"
+            title="Current Git branch · Click to refresh"
+          >
+            <GitBranch size={12} className="text-[#38bdf8]" />
+            <span>{branchName}</span>
+            <RefreshCw size={10} className="ml-1 text-[#858585]" />
+          </button>
+        )}
 
         {/* Problems / Diagnostics Counter */}
         <div

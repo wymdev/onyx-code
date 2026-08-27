@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ChevronRight } from 'lucide-react';
 import AIChatHeader from './AIChatHeader';
 import AIComposer, { AgentApprovalMode } from './AIComposer';
 import AIMessageList from './AIMessageList';
@@ -6,6 +7,7 @@ import { generateResponseStream, getLocalModels, OllamaModelInfo } from '../serv
 import { ChatMessage, FileNode, OpenFile } from '../types';
 import {
   runAgent,
+  isSerializedAgentToolCall,
   AgentStep,
   TaskItem,
   PendingFileChange,
@@ -13,11 +15,10 @@ import {
   AgentPermissionDecision,
   AgentPermissionRequest,
 } from '../services/agentLoop';
-import AgentStepView from './AgentStepView';
+import AgentStepView, { getAgentActivityLabel } from './AgentStepView';
 import PendingChangesBar from './PendingChangesBar';
 import TaskListPanel from './TaskListPanel';
 import AgentPermissionPrompt from './AgentPermissionPrompt';
-import { Loader2 } from 'lucide-react';
 
 interface AIChatPanelProps {
   onClose: () => void;
@@ -89,9 +90,27 @@ export default function AIChatPanel({
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
   const [taskList, setTaskList] = useState<TaskItem[]>([]);
   const [pendingChanges, setPendingChanges] = useState<Map<string, PendingFileChange>>(new Map());
+  const [agentSummaryMessageId, setAgentSummaryMessageId] = useState<string | null>(null);
+  const [agentElapsedSeconds, setAgentElapsedSeconds] = useState(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const agentStartedAtRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!isLoading || agentStartedAtRef.current === null) return;
+
+    const updateElapsed = () => {
+      const startedAt = agentStartedAtRef.current;
+      if (startedAt !== null) {
+        setAgentElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+      }
+    };
+
+    updateElapsed();
+    const interval = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(interval);
+  }, [isLoading]);
 
   useLayoutEffect(() => {
     const container = scrollContainerRef.current;
@@ -233,13 +252,32 @@ export default function AIChatPanel({
     const userMessage = createMessage('user', visibleInput);
     appendMessage(userMessage);
     setInput('');
+    agentStartedAtRef.current = Date.now();
+    setAgentElapsedSeconds(0);
     setIsLoading(true);
+    setAgentSummaryMessageId(null);
+    if (isAgentMode) {
+      setAgentSteps([]);
+      setTaskList([]);
+    }
+
+    const targetsWorkspaceRoot = /\b(?:this|current|workspace|project)\s+(?:folder|directory|root)\b/i.test(nextInput);
+    const rootFileNames = targetsWorkspaceRoot
+      ? [...nextInput.matchAll(/(?:^|[\s"'`])([a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)(?=$|[\s,.;:!?"'`])/g)]
+          .map((match) => match[1])
+      : [];
+    const agentPathGuidance = targetsWorkspaceRoot
+      ? '\nPATH REQUIREMENT: The user explicitly means the workspace root. Keep bare filenames at the root (for example, "index.html" must be exactly "index.html"). Do not reuse a directory from an earlier request and do not create a new directory unless the newest request names one.'
+      : '';
 
     const fullPrompt = `${buildDeveloperContext()}\nUser Query: ${nextInput}${
       commandContext
         ? `\n\nThe previously requested command has already executed. Its exact result is below:\n${commandContext}\n\nDo not request the same command again if it succeeded. Continue with the next distinct step or give the final result.`
         : ''
-    }\nCRITICAL: When writing code, you MUST use '// FILE: absolute_path' as the FIRST line inside EVERY code block for creating or editing files. Do not output this tag for regular conversational text. When you want to execute a command, use '// COMMAND: command' in a bash code block.`;
+    }${isAgentMode
+      ? `${agentPathGuidance}\nUse the available agent tools for every file or command action. The newest User Query overrides conflicting older chat context. Do not output tool JSON or code blocks as a substitute for calling a tool.`
+      : "\nCRITICAL: When writing code, you MUST use '// FILE: absolute_path' as the FIRST line inside EVERY code block for creating or editing files. Do not output this tag for regular conversational text. When you want to execute a command, use '// COMMAND: command' in a bash code block."
+    }`;
 
     const controller = new AbortController();
     setAbortController(controller);
@@ -252,6 +290,7 @@ export default function AIChatPanel({
           rootPath: rootPath || '',
           signal: controller.signal,
           pendingChanges,
+          rootFileNames,
           onStep: (step) => {
             setAgentSteps((current) => {
               const existingIndex = current.findIndex((s) => s.id === step.id);
@@ -267,17 +306,42 @@ export default function AIChatPanel({
           onTaskList: (tasks) => setTaskList(tasks),
           onPermissionRequest: requestAgentPermission,
         });
-        const mappedMessages: ChatMessage[] = result.messages.map((m: any, i: number) => ({
-          ...m,
-          content: m.role === 'user' && m.content === fullPrompt ? visibleInput : m.content,
-          id: m.id || `agent-msg-${i}-${Date.now()}`,
-        }));
+        const mappedMessages: ChatMessage[] = result.messages
+          .filter((message) =>
+            (message.role === 'user' || message.role === 'assistant') &&
+            message.content.trim().length > 0 &&
+            !isSerializedAgentToolCall(message.content)
+          )
+          .map((message, index) => ({
+            role: message.role as ChatMessage['role'],
+            content: message.role === 'user' && message.content === fullPrompt
+              ? visibleInput
+              : message.content,
+            id: `agent-msg-${index}-${Date.now()}`,
+          }));
+        const finalText = result.finalText.trim();
+        const alreadyIncludesFinal = mappedMessages.some(
+          (message) => message.role === 'assistant' && message.content.trim() === finalText
+        );
+        if (finalText && !alreadyIncludesFinal) {
+          const finalMessage = createMessage('assistant', finalText);
+          mappedMessages.push(finalMessage);
+          setAgentSummaryMessageId(finalMessage.id);
+        } else if (finalText) {
+          const finalMessage = mappedMessages.find(
+            (message) => message.role === 'assistant' && message.content.trim() === finalText
+          );
+          setAgentSummaryMessageId(finalMessage?.id || null);
+        }
         setMessages(mappedMessages);
       } catch (e: any) {
         if (e.name !== 'AbortError') {
           appendMessage(createMessage('assistant', `Agent error: ${e.message}`));
         }
       } finally {
+        if (agentStartedAtRef.current !== null) {
+          setAgentElapsedSeconds(Math.max(0, Math.floor((Date.now() - agentStartedAtRef.current) / 1000)));
+        }
         setIsLoading(false);
         setAbortController(null);
       }
@@ -335,6 +399,9 @@ export default function AIChatPanel({
         )
       );
     } finally {
+      if (agentStartedAtRef.current !== null) {
+        setAgentElapsedSeconds(Math.max(0, Math.floor((Date.now() - agentStartedAtRef.current) / 1000)));
+      }
       setIsLoading(false);
       setAbortController(null);
     }
@@ -370,6 +437,9 @@ export default function AIChatPanel({
     setAgentSteps([]);
     setTaskList([]);
     setPendingChanges(new Map());
+    setAgentSummaryMessageId(null);
+    setAgentElapsedSeconds(0);
+    agentStartedAtRef.current = null;
   };
 
   const currentAgentStep = [...agentSteps].reverse().find(
@@ -378,15 +448,28 @@ export default function AIChatPanel({
   const activityLabel = permissionRequest || currentAgentStep?.status === 'awaiting_permission'
     ? 'Waiting for approval'
     : currentAgentStep?.status === 'running'
-    ? `Running ${currentAgentStep.tool.replace(/_/g, ' ')}`
+    ? getAgentActivityLabel(currentAgentStep)
     : isPlanningMode
     ? 'Planning'
-    : isAgentMode
-    ? 'Agent is thinking'
     : 'Thinking';
+  const completedAgentSteps = agentSteps.filter(
+    (step) => step.status === 'done' || step.status === 'error'
+  );
+  const agentSummaryMessage = agentSummaryMessageId
+    ? messages.find((message) => message.id === agentSummaryMessageId)
+    : undefined;
+  const conversationMessages = agentSummaryMessage
+    ? messages.filter((message) => message.id !== agentSummaryMessage.id)
+    : messages;
+  const formatElapsed = (seconds: number) => {
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+  };
 
   return (
-    <div className="flex h-full w-full min-w-0 flex-col border-l border-[#252526] bg-[#18181b] font-sans">
+    <div className="workbench-panel flex h-full w-full min-w-0 flex-col border-l border-[#252526] bg-[#18181b] font-sans">
       {/* Clean AI Header */}
       <AIChatHeader
         onClear={handleClear}
@@ -396,54 +479,79 @@ export default function AIChatPanel({
       />
 
       {/* Message and Step View */}
-      <div ref={scrollContainerRef} className="flex flex-1 flex-col overflow-y-auto overflow-x-hidden p-3 relative">
-        <TaskListPanel tasks={taskList} />
+      <div ref={scrollContainerRef} className="relative flex flex-1 flex-col overflow-y-auto overflow-x-hidden px-4 py-5">
+        <div className="flex flex-col gap-12">
+          <AIMessageList
+            messages={conversationMessages}
+            isAgentMode={isAgentMode}
+            copied={copied}
+            activeFile={activeFile}
+            rootPath={rootPath}
+            onApply={handleApply}
+            onCopy={handleCopy}
+            onCommandResult={handleCommandResult}
+          />
 
-        <AIMessageList
-          messages={messages}
-          copied={copied}
-          activeFile={activeFile}
-          rootPath={rootPath}
-          onApply={handleApply}
-          onCopy={handleCopy}
-          onCommandResult={handleCommandResult}
-        />
+          {(isLoading || completedAgentSteps.length > 0 || agentSummaryMessage) && (
+            <section className="space-y-6">
+              {(isLoading || completedAgentSteps.length > 0) && (
+                <details className="group" open={isLoading}>
+                  <summary className="flex cursor-pointer list-none items-center gap-1.5 border-b border-[#2b2b2b] pb-3 text-[11.5px] text-[#7f7f84] outline-none transition-colors hover:text-[#b5b5ba] [&::-webkit-details-marker]:hidden">
+                    <span>{isLoading ? 'Working' : 'Worked'} for {formatElapsed(agentElapsedSeconds)}</span>
+                    <ChevronRight size={13} className="transition-transform duration-150 group-open:rotate-90" />
+                  </summary>
+                  <div className="space-y-3 pt-3">
+                    <TaskListPanel tasks={taskList} />
+                    {completedAgentSteps.length > 0 && (
+                      <div className="space-y-0.5">
+                        {completedAgentSteps.map((step) => (
+                          <AgentStepView key={step.id} step={step} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </details>
+              )}
 
-        {agentSteps.map((step) => (
-          <AgentStepView key={step.id} step={step} />
-        ))}
-
-        {isLoading && (
-          <div className="mb-3 flex items-center gap-2.5 pl-1 text-xs text-[#a8a8b0]" role="status" aria-live="polite">
-            <span className="flex h-7 w-7 items-center justify-center rounded-md border border-sky-400/20 bg-sky-400/10 text-sky-400">
-              <Loader2 size={14} className="animate-spin" />
-            </span>
-            <span>{activityLabel}</span>
-            <span className="flex items-end gap-1" aria-hidden="true">
-              {[0, 1, 2].map((index) => (
-                <span
-                  key={index}
-                  className="h-1 w-1 animate-bounce rounded-full bg-sky-400"
-                  style={{ animationDelay: `${index * 140}ms` }}
+              {agentSummaryMessage && (
+                <AIMessageList
+                  messages={[agentSummaryMessage]}
+                  isAgentMode
+                  copied={copied}
+                  activeFile={activeFile}
+                  rootPath={rootPath}
+                  onApply={handleApply}
+                  onCopy={handleCopy}
+                  onCommandResult={handleCommandResult}
                 />
-              ))}
-            </span>
-          </div>
-        )}
+              )}
+
+              {isLoading && (
+                <div
+                  className="min-h-8 pt-1 text-xs"
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  <span className="agent-status-shimmer font-medium">{activityLabel}</span>
+                </div>
+              )}
+            </section>
+          )}
+
+          <PendingChangesBar
+            changes={pendingChanges}
+            onAcceptAll={() => setPendingChanges(new Map())}
+            onRejectAll={() => {
+              revertPendingChanges(rootPath || '', pendingChanges).then(() => {
+                setPendingChanges(new Map());
+              });
+            }}
+          />
+        </div>
 
         <div ref={messagesEndRef} />
       </div>
-
-      {/* Safety Pending Changes Bar */}
-      <PendingChangesBar
-        changes={pendingChanges}
-        onAcceptAll={() => setPendingChanges(new Map())}
-        onRejectAll={() => {
-          revertPendingChanges(rootPath || '', pendingChanges).then(() => {
-            setPendingChanges(new Map());
-          });
-        }}
-      />
 
       {permissionRequest && (
         <AgentPermissionPrompt request={permissionRequest} onDecision={decidePermission} />

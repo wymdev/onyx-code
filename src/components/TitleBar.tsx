@@ -109,6 +109,7 @@ export default function TitleBar({
 }: TitleBarProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuBarRef = useRef<HTMLDivElement>(null);
+  const isMacOS = window.electronAPI?.platform === 'darwin';
 
   const menus: MenuDef[] = [
     {
@@ -234,10 +235,17 @@ export default function TitleBar({
     setOpenMenu(null);
   };
 
+  // macOS renders these commands in the system menu bar and uses a native
+  // window title strip. Rendering this row as well creates a nested toolbar.
+  if (isMacOS) return null;
+
   return (
-    <div className="drag-region relative z-50 flex h-[35px] w-full shrink-0 items-center justify-between border-b border-[#2b2b36] bg-[#18181b] px-2 text-[#cccccc] font-sans text-xs select-none">
+    <div className="workbench-titlebar drag-region relative z-50 flex h-[35px] w-full shrink-0 items-center justify-between border-b border-[#2b2b36] bg-[#18181b] px-2 text-[#cccccc] font-sans text-xs select-none">
       {/* Left section: Logo & Menus */}
-      <div ref={menuBarRef} className="no-drag flex h-full items-center">
+      <div
+        ref={menuBarRef}
+        className="no-drag flex h-full items-center"
+      >
         <div className="flex h-full items-center px-1.5 cursor-pointer">
           <OnyxCodeLogo size={19} />
         </div>
@@ -331,30 +339,32 @@ export default function TitleBar({
           <PanelRight size={14} />
         </button>
 
-        {/* Window controls */}
-        <div className="flex items-center ml-2">
-          <button
-            onClick={() => window.electronAPI?.minimize()}
-            className="flex h-[35px] w-[42px] items-center justify-center text-[#a1a1aa] transition-colors hover:bg-[#27272a] hover:text-white"
-            title="Minimize"
-          >
-            <Minus size={14} />
-          </button>
-          <button
-            onClick={() => window.electronAPI?.maximize()}
-            className="flex h-[35px] w-[42px] items-center justify-center text-[#a1a1aa] transition-colors hover:bg-[#27272a] hover:text-white"
-            title="Maximize"
-          >
-            <Square size={12} />
-          </button>
-          <button
-            onClick={() => window.electronAPI?.close()}
-            className="flex h-[35px] w-[42px] items-center justify-center text-[#a1a1aa] transition-colors hover:bg-[#e81123] hover:text-white"
-            title="Close"
-          >
-            <X size={15} />
-          </button>
-        </div>
+        {/* macOS supplies native traffic lights on the left. */}
+        {!isMacOS && (
+          <div className="flex items-center ml-2">
+            <button
+              onClick={() => window.electronAPI?.minimize()}
+              className="flex h-[35px] w-[42px] items-center justify-center text-[#a1a1aa] transition-colors hover:bg-[#27272a] hover:text-white"
+              title="Minimize"
+            >
+              <Minus size={14} />
+            </button>
+            <button
+              onClick={() => window.electronAPI?.maximize()}
+              className="flex h-[35px] w-[42px] items-center justify-center text-[#a1a1aa] transition-colors hover:bg-[#27272a] hover:text-white"
+              title="Maximize"
+            >
+              <Square size={12} />
+            </button>
+            <button
+              onClick={() => window.electronAPI?.close()}
+              className="flex h-[35px] w-[42px] items-center justify-center text-[#a1a1aa] transition-colors hover:bg-[#e81123] hover:text-white"
+              title="Close"
+            >
+              <X size={15} />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

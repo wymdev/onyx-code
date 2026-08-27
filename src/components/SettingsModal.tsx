@@ -103,20 +103,23 @@ export default function SettingsModal({
               <div className="flex flex-col gap-6">
                 <SettingRow label="Theme" description="Choose your color theme">
                   <div className="flex items-center gap-2">
-                    {(['dark', 'light', 'system'] as const).map((theme) => (
+                    {([
+                      { id: 'dark', label: 'Onyx Dark', icon: Moon },
+                      { id: 'vscode-dark', label: 'VS Code Dark', icon: Monitor },
+                      { id: 'light', label: 'Light', icon: Sun },
+                      { id: 'system', label: 'System', icon: Monitor },
+                    ] as const).map(({ id, label, icon: ThemeIcon }) => (
                       <button
-                        key={theme}
-                        onClick={() => handleSave({ theme })}
+                        key={id}
+                        onClick={() => handleSave({ theme: id })}
                         className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs transition-colors ${
-                          settings.theme === theme
+                          settings.theme === id
                             ? 'border-[#3b82f6] bg-[#3b82f6]/10 text-[#60a5fa]'
                             : 'border-[#2a2a32] text-[#858585] hover:border-[#3c3c4c]'
                         }`}
                       >
-                        {theme === 'dark' && <Moon size={12} />}
-                        {theme === 'light' && <Sun size={12} />}
-                        {theme === 'system' && <Monitor size={12} />}
-                        {theme.charAt(0).toUpperCase() + theme.slice(1)}
+                        <ThemeIcon size={12} />
+                        {label}
                       </button>
                     ))}
                   </div>

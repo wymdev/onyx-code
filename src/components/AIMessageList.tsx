@@ -1,6 +1,7 @@
 import { Fragment } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { isSerializedAgentToolCall } from '../services/agentLoop';
 import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter';
 import cpp from 'react-syntax-highlighter/dist/esm/languages/prism/cpp';
 import python from 'react-syntax-highlighter/dist/esm/languages/prism/python';
@@ -18,16 +19,13 @@ import markup from 'react-syntax-highlighter/dist/esm/languages/prism/markup';
 import yaml from 'react-syntax-highlighter/dist/esm/languages/prism/yaml';
 import vscDarkPlus from 'react-syntax-highlighter/dist/esm/styles/prism/vsc-dark-plus';
 import {
-  Cpu,
   BrainCircuit,
   Check,
   Copy,
   FilePlus,
-  Loader2,
   Play,
   Terminal,
   Trash2,
-  User,
 } from 'lucide-react';
 import { ChatMessage, OpenFile } from '../types';
 
@@ -151,6 +149,7 @@ function extractFences(content: string): FenceInfo[] {
 
 interface AIMessageListProps {
   messages: ChatMessage[];
+  isAgentMode?: boolean;
   copied: string | null;
   activeFile?: OpenFile;
   rootPath?: string | null;
@@ -176,7 +175,7 @@ function normalizeGeneratedPath(targetPath: string, activeFile?: OpenFile, rootP
 }
 
 const MARKDOWN_COMPONENTS = {
-  p: ({ children }: any) => <p className="whitespace-pre-wrap break-words leading-relaxed text-[#d4d4d8]">{children}</p>,
+  p: ({ children }: any) => <p className="whitespace-pre-wrap break-words leading-[1.65] text-[#d4d4d8] [&:not(:first-child)]:mt-2.5">{children}</p>,
   strong: ({ children }: any) => <strong className="font-semibold text-white">{children}</strong>,
   em: ({ children }: any) => <em className="italic text-[#e4e4e7]">{children}</em>,
   a: ({ href, children }: any) => (
@@ -191,12 +190,12 @@ const MARKDOWN_COMPONENTS = {
       {children}
     </a>
   ),
-  ul: ({ children }: any) => <ul className="list-disc space-y-1 pl-5 text-[#d4d4d8]">{children}</ul>,
-  ol: ({ children }: any) => <ol className="list-decimal space-y-1 pl-5 text-[#d4d4d8]">{children}</ol>,
+  ul: ({ children }: any) => <ul className="my-2 list-disc space-y-1.5 pl-5 text-[#d4d4d8] marker:text-[#71717a]">{children}</ul>,
+  ol: ({ children }: any) => <ol className="my-2 list-decimal space-y-1.5 pl-5 text-[#d4d4d8] marker:text-[#71717a]">{children}</ol>,
   li: ({ children }: any) => <li className="leading-relaxed">{children}</li>,
-  h1: ({ children }: any) => <h1 className="mt-1 text-base font-semibold text-white">{children}</h1>,
-  h2: ({ children }: any) => <h2 className="mt-1 text-[13px] font-semibold text-white">{children}</h2>,
-  h3: ({ children }: any) => <h3 className="mt-1 text-[12.5px] font-semibold text-white">{children}</h3>,
+  h1: ({ children }: any) => <h1 className="mb-2 mt-4 text-base font-semibold tracking-tight text-white first:mt-0">{children}</h1>,
+  h2: ({ children }: any) => <h2 className="mb-1.5 mt-4 text-[13px] font-semibold tracking-tight text-white first:mt-0">{children}</h2>,
+  h3: ({ children }: any) => <h3 className="mb-1 mt-3 text-[12.5px] font-semibold text-[#f4f4f5] first:mt-0">{children}</h3>,
   blockquote: ({ children }: any) => (
     <blockquote className="border-l-2 border-[#3f3f46] pl-3 text-[#a1a1aa] italic">{children}</blockquote>
   ),
@@ -220,6 +219,7 @@ const MARKDOWN_COMPONENTS = {
 
 export default function AIMessageList({
   messages,
+  isAgentMode = false,
   copied,
   activeFile,
   rootPath,
@@ -397,13 +397,10 @@ export default function AIMessageList({
             <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-1.5 text-[11px] font-medium text-[#a1a1aa] hover:text-white outline-none">
               <BrainCircuit
                 size={13}
-                className={isThinking ? 'animate-pulse text-[#38bdf8]' : 'text-[#38bdf8]'}
+                className="text-[#38bdf8]"
               />
               {isThinking ? (
-                <span className="flex items-center gap-1.5 text-[#38bdf8]">
-                  <span>Reasoning...</span>
-                  <Loader2 size={11} className="animate-spin text-[#38bdf8]" />
-                </span>
+                <span className="agent-status-shimmer">Thinking</span>
               ) : (
                 <span>Reasoning Steps</span>
               )}
@@ -457,46 +454,35 @@ export default function AIMessageList({
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-5 bg-transparent font-sans">
+    <div className="space-y-12 bg-transparent font-sans">
       {messages
-        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .filter((m) =>
+          m.role === 'user' || (
+            m.role === 'assistant' &&
+            m.content.trim().length > 0 &&
+            (!isAgentMode || !isSerializedAgentToolCall(m.content))
+          )
+        )
         .map((message) => {
           const generatedFiles = getGeneratedFiles(message);
           const isUser = message.role === 'user';
 
           return (
-            <div key={message.id} className="flex items-start gap-2.5">
-              {/* Modern Compact Avatar */}
+            <div
+              key={message.id}
+              className={isUser ? 'flex w-full justify-end' : 'w-full'}
+            >
               <div
-                className={`flex h-6 w-6 shrink-0 items-center justify-center rounded border shadow-sm ${
+                className={`min-w-0 ${
                   isUser
-                    ? 'bg-[#27272a] text-[#d4d4d8] border-[#3f3f46]'
-                    : 'bg-[#007acc]/15 text-[#38bdf8] border-[#007acc]/30'
+                    ? 'w-fit max-w-[82%] rounded-2xl bg-[#242424] px-4 py-3 text-[12.5px] leading-relaxed text-[#e4e4e7]'
+                    : 'w-full text-[12.5px] leading-relaxed text-[#d4d4d8]'
                 }`}
               >
-                {isUser ? <User size={12} /> : <Cpu size={12} />}
-              </div>
-
-              {/* Message Body */}
-              <div className="min-w-0 flex-1 space-y-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-semibold text-[#a1a1aa]">
-                    {isUser ? 'You' : 'Local Assistant'}
-                  </span>
-                </div>
-
-                <div
-                  className={`text-[12.5px] leading-relaxed ${
-                    isUser
-                      ? 'rounded-lg bg-[#27272a]/70 border border-[#333338] px-3 py-2 text-[#e4e4e7]'
-                      : 'text-[#d4d4d8] pt-0.5'
-                  }`}
-                >
-                  {formatMessage(message.content, message.id)}
-                </div>
+                {formatMessage(message.content, message.id)}
 
                 {generatedFiles.length > 1 && (
-                  <div className="pt-2 flex justify-end">
+                  <div className="flex justify-end pt-3">
                     <button
                       onClick={async () => {
                         for (const file of generatedFiles) {
