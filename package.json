@@ -1,0 +1,89 @@
+{
+  "name": "onyx-code",
+  "version": "1.0.0",
+  "description": "A privacy-first, offline desktop IDE with a local Ollama-backed AI assistant, built with Electron and React",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"tsc -w -p electron/tsconfig.json\" \"wait-on tcp:5173 && node scripts/launch-electron.js\"",
+    "web:dev": "vite",
+    "build": "vite build && tsc -p electron/tsconfig.json && electron-builder --win",
+    "renderer:build": "vite build",
+    "electron:dev": "concurrently -k \"vite\" \"tsc -w -p electron/tsconfig.json\" \"wait-on tcp:5173 && node scripts/launch-electron.js\"",
+    "electron:build": "vite build && tsc -p electron/tsconfig.json && electron-builder --win"
+  },
+  "author": "Sourabh Nirvani",
+  "license": "MIT",
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-tabs": "^1.1.13",
+    "@types/diff": "^7.0.2",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "9.4.5",
+    "cheerio": "^1.2.0",
+    "clsx": "^2.1.1",
+    "diff": "^9.0.0",
+    "dotenv": "^17.4.2",
+    "electron-store": "^11.0.2",
+    "lucide-react": "^0.263.1",
+    "node-pty": "^1.1.0",
+    "nodemailer": "^8.0.2",
+    "pdf-parse": "^2.4.5",
+    "react": "^18.2.0",
+    "react-contexify": "^6.0.0",
+    "react-dom": "^18.2.0",
+    "react-markdown": "^10.1.0",
+    "react-syntax-highlighter": "^16.1.1",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.5.0",
+    "xterm": "^5.3.0",
+    "xterm-addon-fit": "^0.8.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/nodemailer": "^7.0.11",
+    "@types/react": "^18.2.21",
+    "@types/react-dom": "^18.2.7",
+    "@types/react-syntax-highlighter": "^15.5.13",
+    "@vitejs/plugin-react": "^4.0.4",
+    "autoprefixer": "^10.4.24",
+    "concurrently": "^8.2.1",
+    "electron": "^26.2.1",
+    "electron-builder": "^24.6.4",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.2.2",
+    "vite": "^4.4.9",
+    "wait-on": "^7.0.1"
+  },
+  "build": {
+    "appId": "com.wymdev.onyxcode",
+    "productName": "Onyx Code",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "public/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "public/icon.png",
+      "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Onyx Code"
+    }
+  }
+}

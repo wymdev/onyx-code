@@ -1,0 +1,9 @@
+{
+  "id": "onyx.example.hello",
+  "name": "Hello Onyx Plugin",
+  "version": "1.0.0",
+  "publisher": "Onyx Code",
+  "description": "A minimal real plugin that registers a Command Palette command.",
+  "main": "main.js",
+  "permissions": ["commands"]
+}
