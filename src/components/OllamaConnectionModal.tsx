@@ -21,6 +21,7 @@ import {
   setOllamaBaseUrl,
   testOllamaConnection,
 } from '../services/ollama';
+import { appConfig } from '../platform/config';
 
 interface OllamaConnectionModalProps {
   isOpen: boolean;
@@ -102,7 +103,7 @@ export default function OllamaConnectionModal({
   useEffect(() => {
     if (isOpen) {
       const initialize = async () => {
-        const savedHost = (await window.appConfig?.getOllamaHost?.().catch(() => undefined)) || getOllamaBaseUrl();
+        const savedHost = (await appConfig.getOllamaHost().catch(() => undefined)) || getOllamaBaseUrl();
         setHostUrl(savedHost);
         setOllamaBaseUrl(savedHost);
         await Promise.all([runTest(), fetchModels()]);
@@ -120,7 +121,7 @@ export default function OllamaConnectionModal({
 
   const handleSaveHost = async () => {
     setOllamaBaseUrl(hostUrl);
-    await window.appConfig?.setOllamaHost(hostUrl).catch(() => {
+    await appConfig.setOllamaHost(hostUrl).catch(() => {
       // Non-fatal: the renderer's own localStorage copy still governs this session;
       // the main process will just fall back to its default host on next launch.
     });

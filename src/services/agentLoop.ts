@@ -1,5 +1,7 @@
 import { AGENT_SYSTEM_PROMPT, AGENT_TOOLS, AgentChatMessage, AgentToolCall, chatWithTools } from './ollama';
 import { FileNode } from '../types';
+import { fs } from '../platform/fs';
+import { runtime } from '../platform/runtime';
 
 export interface AgentStep {
   id: string;
@@ -144,6 +146,10 @@ const AGENT_TOOL_ALIASES: Record<string, string> = {
   delete_folder: 'delete_directory',
   remove_folder: 'delete_directory',
   remove_directory: 'delete_directory',
+  compile_file: 'compile_workspace',
+  compile: 'compile_workspace',
+  build_file: 'compile_workspace',
+  build: 'compile_workspace',
 };
 
 function normalizeToolName(name: string, args: Record<string, any>): string {
@@ -156,6 +162,9 @@ function normalizeToolName(name: string, args: Record<string, any>): string {
     return alias;
   }
   if (alias === 'delete_directory' && typeof args.path === 'string') {
+    return alias;
+  }
+  if (alias === 'compile_workspace' && typeof args.path === 'string') {
     return alias;
   }
   return name;
@@ -217,11 +226,14 @@ function parseFallbackToolCall(content: string): AgentToolCall | null {
   ])];
 
   for (const candidate of candidates) {
-    if (!candidate.startsWith('{') || !candidate.endsWith('}')) continue;
+    const isObject = candidate.startsWith('{') && candidate.endsWith('}');
+    const isArray = candidate.startsWith('[') && candidate.endsWith(']');
+    if (!isObject && !isArray) continue;
 
     try {
       const parsed = JSON.parse(candidate);
-      const wrappedTool = Array.isArray(parsed?.tool_calls) ? parsed.tool_calls[0] : parsed;
+      const rootParsed = Array.isArray(parsed) ? parsed[0] : parsed;
+      const wrappedTool = Array.isArray(rootParsed?.tool_calls) ? rootParsed.tool_calls[0] : rootParsed;
       const tool = wrappedTool?.function && typeof wrappedTool.function === 'object'
         ? wrappedTool.function
         : wrappedTool;
@@ -236,7 +248,7 @@ function parseFallbackToolCall(content: string): AgentToolCall | null {
       if (!name || toolArguments === undefined) continue;
 
       return {
-        id: typeof parsed.id === 'string' ? parsed.id : undefined,
+        id: typeof parsed?.id === 'string' ? parsed.id : undefined,
         function: {
           name,
           arguments: typeof toolArguments === 'string'
@@ -293,7 +305,7 @@ async function snapshotDirectoryFiles(
     const relativePath = relativeToWorkspace(rootPath, node.path);
     if (pendingChanges.has(relativePath)) continue;
     try {
-      const originalContent = await window.fileSystem!.readFile(node.path);
+      const originalContent = (await fs.readFile(node.path)) as string;
       pendingChanges.set(relativePath, {
         path: relativePath,
         type: 'delete',
@@ -313,7 +325,7 @@ async function ensureTracked(pendingChanges: Map<string, PendingFileChange>, ful
     return;
   }
   try {
-    const original = await window.fileSystem!.readFile(fullPath);
+    const original = (await fs.readFile(fullPath)) as string;
     pendingChanges.set(relPath, { path: relPath, type: 'edit', originalContent: original, currentContent: original });
   } catch {
     pendingChanges.set(relPath, { path: relPath, type: 'create', originalContent: null, currentContent: null });
@@ -322,7 +334,7 @@ async function ensureTracked(pendingChanges: Map<string, PendingFileChange>, ful
 
 async function refreshCurrent(pendingChanges: Map<string, PendingFileChange>, fullPath: string, relPath: string) {
   try {
-    const current = await window.fileSystem!.readFile(fullPath);
+    const current = (await fs.readFile(fullPath)) as string;
     const entry = pendingChanges.get(relPath);
     if (entry) {
       entry.currentContent = current;
@@ -341,25 +353,25 @@ async function executeTool(
 ): Promise<{ summary: string; detail: string; success?: boolean }> {
   const name = call.function.name;
 
-  if (!window.fileSystem || !window.runtime) {
+  if (!fs.isAvailable() || !runtime.isAvailable()) {
     throw new Error('File system bridge unavailable');
   }
 
   switch (name) {
     case 'read_file': {
       const full = resolvePath(rootPath, args.path);
-      const content = await window.fileSystem.readFile(full);
+      const content = (await fs.readFile(full)) as string;
       return { summary: `Read ${args.path}`, detail: truncate(content) };
     }
 
     case 'list_directory': {
       const target = !args.path || args.path === '.' ? rootPath : resolvePath(rootPath, args.path);
-      const tree = await window.fileSystem.readDirectory(target);
+      const tree = (await fs.readDirectory(target)) as FileNode[];
       return { summary: `Listed ${args.path || '.'}`, detail: truncate(flattenFileTree(tree)) };
     }
 
     case 'search_files': {
-      const results = (await window.fileSystem.searchFiles?.(args.query)) ?? [];
+      const results = (await fs.searchFiles(args.query)) ?? [];
       const listing = results.map((r) => r.path).join('\n') || 'No matches found.';
       return { summary: `Searched for "${args.query}" (${results.length} matches)`, detail: truncate(listing) };
     }
@@ -369,14 +381,14 @@ async function executeTool(
       const wasAlreadyTracked = pendingChanges.has(args.path);
       await ensureTracked(pendingChanges, full, args.path);
       try {
-        await window.fileSystem.editFile!(full, args.old_text, args.new_text);
+        await fs.editFile(full, args.old_text, args.new_text);
       } catch (error) {
         if (!wasAlreadyTracked) pendingChanges.delete(args.path);
         const message = error instanceof Error ? error.message : String(error);
         if (/no exact match|matched .* times|must be unique/i.test(message)) {
           let currentContent = '';
           try {
-            currentContent = await window.fileSystem.readFile(full);
+            currentContent = (await fs.readFile(full)) as string;
           } catch {
             // Preserve the original edit error when the file can no longer be read.
           }
@@ -397,7 +409,7 @@ async function executeTool(
     case 'write_file': {
       const full = resolvePath(rootPath, args.path);
       await ensureTracked(pendingChanges, full, args.path);
-      await window.fileSystem.writeFile(full, args.content ?? '');
+      await fs.writeFile(full, args.content ?? '');
       const entry = pendingChanges.get(args.path);
       if (entry) {
         entry.currentContent = args.content ?? '';
@@ -413,7 +425,7 @@ async function executeTool(
       const wasAlreadyTracked = pendingChanges.has(args.path);
       await ensureTracked(pendingChanges, full, args.path);
       try {
-        await window.fileSystem.deleteFile(full);
+        await fs.deleteFile(full);
       } catch (error) {
         if (!wasAlreadyTracked) pendingChanges.delete(args.path);
         const message = error instanceof Error ? error.message : String(error);
@@ -436,10 +448,10 @@ async function executeTool(
         throw new Error('Cannot delete the workspace root. List "." and delete each child file or directory instead.');
       }
       const trackedBeforeDelete = new Set(pendingChanges.keys());
-      const tree = await window.fileSystem.readDirectory(full);
+      const tree = (await fs.readDirectory(full)) as FileNode[];
       const trackedFiles = await snapshotDirectoryFiles(tree, rootPath, pendingChanges);
       try {
-        await window.fileSystem.deleteFolder(full);
+        await fs.deleteFolder(full);
       } catch (error) {
         for (const path of pendingChanges.keys()) {
           if (!trackedBeforeDelete.has(path)) pendingChanges.delete(path);
@@ -453,7 +465,7 @@ async function executeTool(
     }
 
     case 'run_command': {
-      const result = await window.runtime.runTerminalCommand(args.command);
+      const result = (await runtime.runTerminalCommand(args.command)) as { stdout: string; stderr: string; exitCode: number };
       const out = `${result.stdout || ''}${result.stderr ? `\nSTDERR:\n${result.stderr}` : ''}`.trim();
       const exitCode = Number.isFinite(result.exitCode) ? result.exitCode : 1;
       return {
@@ -469,6 +481,27 @@ async function executeTool(
       return {
         summary: `Updated task list (${tasks.length} items)`,
         detail: tasks.map((t) => `[${t.status}] ${t.text}`).join('\n'),
+      };
+    }
+
+    case 'compile_workspace': {
+      const full = resolvePath(rootPath, args.path);
+      const res = await runtime.compileFile(full);
+      if (!res) {
+        return {
+          summary: `Compiler not available for ${args.path}`,
+          detail: 'No compilation response received from runtime bridge.',
+          success: false,
+        };
+      }
+      const diagSummary = (res.diagnostics || [])
+        .map((d) => `[${d.severity.toUpperCase()}] Line ${d.line}, Col ${d.column}: ${d.message}`)
+        .join('\n');
+      const out = `${res.output || ''}${diagSummary ? `\nDIAGNOSTICS:\n${diagSummary}` : ''}${res.error ? `\nERROR:\n${res.error}` : ''}`.trim();
+      return {
+        summary: res.success ? `Compilation passed for ${args.path}` : `Compilation failed for ${args.path}`,
+        detail: truncate(out || (res.success ? 'Build succeeded with no compiler errors.' : 'Compilation failed.')),
+        success: res.success,
       };
     }
 
@@ -722,10 +755,10 @@ export async function revertPendingChanges(rootPath: string, pendingChanges: Map
     const full = resolvePath(rootPath, relPath);
     try {
       if (change.type === 'create') {
-        await window.fileSystem!.deleteFile(full);
+        await fs.deleteFile(full);
       } else if (change.originalContent !== null) {
         // Restores edited files, and recreates files the agent deleted.
-        await window.fileSystem!.writeFile(full, change.originalContent);
+        await fs.writeFile(full, change.originalContent);
       }
     } catch {
       // best-effort revert; skip files that no longer make sense to touch

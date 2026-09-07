@@ -1,3 +1,5 @@
+import { ollamaBridge } from '../platform/ollamaBridge';
+
 const DEFAULT_OLLAMA_URL = 'http://localhost:11434';
 
 interface OllamaHttpResponse {
@@ -13,8 +15,8 @@ async function requestOllama(
 ): Promise<OllamaHttpResponse> {
   if (options.signal?.aborted) throw new DOMException('Request aborted', 'AbortError');
 
-  if (window.ollama?.request) {
-    const response = await window.ollama.request({
+  if (ollamaBridge.hasRequest()) {
+    const response = await ollamaBridge.request({
       endpoint,
       method: options.method,
       body: options.body,
@@ -254,7 +256,7 @@ export async function* generateResponseStream(
   options: PromptOptions = {},
   signal?: AbortSignal
 ): AsyncGenerator<string> {
-  if (window.ollama?.startStream && window.ollama?.onStreamEvent) {
+  if (ollamaBridge.hasStreaming()) {
     const requestId = `generate-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const chunks: string[] = [];
     let buffer = '';
@@ -266,7 +268,7 @@ export async function* generateResponseStream(
       wake = null;
       nextWake?.();
     };
-    const unsubscribe = window.ollama.onStreamEvent((event) => {
+    const unsubscribe = ollamaBridge.onStreamEvent((event) => {
       if (event.requestId !== requestId) return;
       if (event.type === 'data' && event.chunk) chunks.push(event.chunk);
       if (event.type === 'error') {
@@ -277,13 +279,13 @@ export async function* generateResponseStream(
       notify();
     });
     const abort = () => {
-      window.ollama?.abortStream?.(requestId);
+      ollamaBridge.abortStream(requestId);
       streamError = new DOMException('Request aborted', 'AbortError');
       finished = true;
       notify();
     };
     signal?.addEventListener('abort', abort, { once: true });
-    window.ollama.startStream({
+    ollamaBridge.startStream({
       requestId,
       endpoint: '/api/generate',
       method: 'POST',
@@ -315,7 +317,7 @@ export async function* generateResponseStream(
     } finally {
       signal?.removeEventListener('abort', abort);
       unsubscribe();
-      if (!finished) window.ollama.abortStream?.(requestId);
+      if (!finished) ollamaBridge.abortStream(requestId);
     }
     return;
   }
@@ -384,6 +386,7 @@ Workflow rules:
 9. Never delete the workspace root itself. To clear a workspace, first call list_directory with ".", then delete each listed root child with delete_file or delete_directory. Use delete_directory only for a named child directory, never ".". Do not use run_command, rm, rmdir, or unlink to bypass these deletion safeguards.
 10. A run_command result with a non-zero exit code is a failure even if the process produced output. Diagnose that result and choose a corrected action; never mark the related task done after a failed command. In particular, do not assume a package's older initialization command still exists after installing its latest version.
 11. If edit_file reports that old_text did not match, use the current file content included in the tool result and construct a new exact, unique replacement. Never retry identical edit_file arguments, and do not repeatedly search for text that the tool already confirmed is absent.
+12. When working on compiled languages (C, C++, Rust, Go, Java), call compile_workspace after making code edits to verify that your changes compile without errors. If the compiler reports errors or warnings, use the output diagnostics to iteratively fix the code until compilation succeeds.
 
 Be direct. Don't narrate steps in prose - let the tool calls do the work. Only write plain text when asking the user a clarifying question, or in your final task_complete summary.`;
 
@@ -536,6 +539,22 @@ export const AGENT_TOOLS = [
           },
         },
         required: ['tasks'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'compile_workspace',
+      description:
+        'Compile a source file (C, C++, Rust, Go, Java) in the workspace to verify there are no compilation or syntax errors. Returns exit code, stdout, and detailed compiler diagnostics/stderr.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Relative path to the source file to compile, e.g. "main.cpp", "src/main.rs", "main.go"' },
+          language: { type: 'string', description: 'Optional language override: "c", "cpp", "rust", "go", "java". If omitted, inferred from file extension.' },
+        },
+        required: ['path'],
       },
     },
   },

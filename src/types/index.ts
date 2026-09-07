@@ -15,6 +15,9 @@ export interface OpenFile {
   isDirty: boolean;
   isUntitled?: boolean;
   isTrusted?: boolean;
+  isDiff?: boolean;
+  originalContent?: string;
+  diffTitle?: string;
 }
 
 export interface ChatMessage {
@@ -45,6 +48,26 @@ export interface CppCompilerInfo {
   command: string;
   version?: string;
   available: boolean;
+}
+
+export interface ToolchainInfo {
+  id: string;
+  name: string;
+  command: string;
+  available: boolean;
+  version?: string;
+  path?: string;
+}
+
+export interface CompilerConfig {
+  optimization?: 'O0' | 'O1' | 'O2' | 'O3' | 'Os' | 'Ofast';
+  cppStandard?: 'c++11' | 'c++14' | 'c++17' | 'c++20' | 'c++23';
+  cStandard?: 'c99' | 'c11' | 'c17';
+  warnings?: 'none' | 'all' | 'extra';
+  treatWarningsAsErrors?: boolean;
+  debugSymbols?: boolean;
+  emitAssembly?: boolean;
+  customFlags?: string;
 }
 
 export interface UserSession {
@@ -139,7 +162,21 @@ declare global {
     runtime: {
       runCurrentFile: (filePath: string, customCommand?: string) => Promise<void>;
       compileCppFile?: (filePath: string, runAfter?: boolean) => Promise<{ success: boolean; diagnostics: DiagnosticItem[]; output?: string }>;
+      compileFile?: (
+        filePath: string,
+        config?: CompilerConfig,
+        runAfter?: boolean
+      ) => Promise<{
+        success: boolean;
+        diagnostics?: DiagnosticItem[];
+        output?: string;
+        assembly?: string;
+        assemblyPath?: string;
+        error?: string;
+      }>;
       detectCppCompilers?: () => Promise<CppCompilerInfo[]>;
+      detectAllToolchains?: () => Promise<ToolchainInfo[]>;
+      cleanBuildArtifacts?: (targetDir?: string) => Promise<{ success: boolean; count: number; error?: string }>;
       stopRun: () => Promise<void>;
       restartRun: () => Promise<void>;
       onRunOutput: (callback: (payload: RunOutputEvent) => void) => () => void;
@@ -159,6 +196,7 @@ declare global {
       add: (file: string) => Promise<void>;
       commit: (message: string) => Promise<void>;
       branch?: () => Promise<string | null>;
+      diff?: (file: string) => Promise<{ original: string; modified: string }>;
     };
     profile?: {
       local: () => Promise<{
@@ -193,6 +231,15 @@ declare global {
       invokeCommand: (commandId: string, args?: unknown) => Promise<unknown>;
       setWorkspaceTrusted: (trusted: boolean) => Promise<InstalledOnyxPlugin[]>;
       onMessage: (callback: (payload: { pluginId: string; message: string }) => void) => () => void;
+    };
+    vscode?: {
+      readSettings: () => Promise<{
+        success: boolean;
+        path?: string;
+        raw?: any;
+        mapped?: Record<string, any>;
+        error?: string;
+      }>;
     };
   }
 }

@@ -1,14 +1,19 @@
 import { useState, useEffect } from 'react';
 import { GitBranch, GitCommit, Plus, RefreshCw } from 'lucide-react';
+import { git } from '../platform/git';
 
-export default function GitView() {
+interface GitViewProps {
+  onOpenDiff?: (file: string) => void;
+}
+
+export default function GitView({ onOpenDiff }: GitViewProps = {}) {
   const [status, setStatus] = useState<string>('');
   const [commitMessage, setCommitMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
   const fetchStatus = async () => {
     try {
-      const result = await window.git?.status();
+      const result = await git.status();
       setStatus(result || '');
     } catch (e) {
       console.error(e);
@@ -20,14 +25,14 @@ export default function GitView() {
   }, []);
 
   const handleAdd = async (file: string) => {
-    await window.git?.add(file);
+    await git.add(file);
     fetchStatus();
   };
 
   const handleCommit = async () => {
     if (!commitMessage.trim()) return;
     setLoading(true);
-    await window.git?.commit(commitMessage);
+    await git.commit(commitMessage);
     setCommitMessage('');
     await fetchStatus();
     setLoading(false);
@@ -78,15 +83,23 @@ export default function GitView() {
         ) : (
           <div className="space-y-1">
             {files.map((item, idx) => (
-              <div key={idx} className="flex items-center justify-between group px-2 py-1 hover:bg-[#2a2a32] rounded">
+              <div
+                key={idx}
+                onClick={() => onOpenDiff?.(item.file)}
+                className="flex items-center justify-between group px-2 py-1 hover:bg-[#2a2a32] rounded cursor-pointer transition-colors"
+                title="Click to view diff"
+              >
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className={`text-xs ${item.code.includes('M') ? 'text-yellow-400' : 'text-green-400'}`}>
+                  <span className={`text-xs font-mono font-semibold ${item.code.includes('M') ? 'text-amber-400' : 'text-emerald-400'}`}>
                     {item.code.trim()}
                   </span>
-                  <span className="truncate text-xs">{item.file}</span>
+                  <span className="truncate text-xs text-[#e4e4e7] group-hover:text-white">{item.file}</span>
                 </div>
                 <button
-                  onClick={() => handleAdd(item.file)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleAdd(item.file);
+                  }}
                   className="opacity-0 group-hover:opacity-100 p-1 hover:text-white text-[#8b91aa] transition-opacity"
                   title="Stage Changes"
                 >

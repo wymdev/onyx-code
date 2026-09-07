@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ChevronRight,
   Circle,
@@ -6,14 +6,19 @@ import {
   Columns,
   FileCode,
   FileText,
+  GitCompare,
+  Play,
+  Settings2,
+  Cpu,
   X,
   Zap,
 } from 'lucide-react';
-import Editor, { useMonaco } from '@monaco-editor/react';
-import { OpenFile } from '../types';
-import { AppSettings } from '../services/settingsService';
+import Editor, { DiffEditor, useMonaco } from '@monaco-editor/react';
+import { DiagnosticItem, OpenFile } from '../types';
+import { AppSettings, settingsService } from '../services/settingsService';
 import { registerCppMonacoSnippets } from '../services/cppService';
 import WelcomeTab from './WelcomeTab';
+import InlineAIWidget from './InlineAIWidget';
 
 interface EditorAreaProps {
   openFiles: OpenFile[];
@@ -34,8 +39,13 @@ interface EditorAreaProps {
   onStartPythonProject: () => void;
   onOpenAIWorkspace: () => void;
   onBuildCpp?: () => void;
+  onRunCode?: () => void;
+  onOpenCompilerConfig?: () => void;
   onToggleSplit?: () => void;
   isSplit?: boolean;
+  diagnostics?: DiagnosticItem[];
+  targetNavigation?: { filePath: string; line: number; column: number; timestamp: number } | null;
+  selectedAiModel?: string;
 }
 
 export default function EditorArea({
@@ -57,12 +67,19 @@ export default function EditorArea({
   onStartPythonProject,
   onOpenAIWorkspace,
   onBuildCpp,
+  onRunCode,
+  onOpenCompilerConfig,
   onToggleSplit,
   isSplit = false,
+  diagnostics = [],
+  targetNavigation,
+  selectedAiModel,
 }: EditorAreaProps) {
   const editorRef = useRef<any>(null);
   const monaco = useMonaco();
   const activeFile = openFiles[activeFileIndex];
+  const [showInlineAi, setShowInlineAi] = useState(false);
+  const [inlineAiSelection, setInlineAiSelection] = useState<{ text: string; range: any } | null>(null);
 
   useEffect(() => {
     const handleSaveShortcut = (event: KeyboardEvent) => {
@@ -74,41 +91,99 @@ export default function EditorArea({
         event.preventDefault();
         onBuildCpp?.();
       }
+      if (event.key === 'F5') {
+        event.preventDefault();
+        onRunCode?.();
+      }
     };
 
     window.addEventListener('keydown', handleSaveShortcut);
     return () => window.removeEventListener('keydown', handleSaveShortcut);
-  }, [onSave, onBuildCpp]);
+  }, [onSave, onBuildCpp, onRunCode]);
 
   // Setup Monaco theme and C++ snippets
   useEffect(() => {
     if (monaco) {
-      monaco.editor.defineTheme('onyx-code-dark', {
-        base: 'vs-dark',
-        inherit: true,
-        rules: [
-          { token: 'comment', foreground: '6a9955', fontStyle: 'italic' },
-          { token: 'keyword', foreground: '569cd6' },
-          { token: 'keyword.cpp', foreground: '569cd6' },
-          { token: 'type.cpp', foreground: '4ec9b0' },
-          { token: 'string', foreground: 'ce9178' },
-          { token: 'number', foreground: 'b5cea8' },
-          { token: 'function', foreground: 'dcdcaa' },
-        ],
-        colors: {
-          'editor.background': '#1e1e1e',
-          'editor.lineHighlightBackground': '#282828',
-          'editorLineNumber.foreground': '#858585',
-          'editorLineNumber.activeForeground': '#c6c6c6',
-          'editorIndentGuide.background': '#404040',
-          'editorIndentGuide.activeBackground': '#707070',
-        },
-      });
-      monaco.editor.setTheme('onyx-code-dark');
-
+      settingsService.defineMonacoThemes(monaco);
+      settingsService.applyTheme(settings?.theme || 'dark', monaco);
       registerCppMonacoSnippets(monaco);
     }
   }, [monaco]);
+
+  useEffect(() => {
+    if (monaco && settings?.theme) {
+      settingsService.applyTheme(settings.theme, monaco);
+    }
+  }, [monaco, settings?.theme]);
+
+  // Update Monaco squiggly error markers from diagnostics
+  useEffect(() => {
+    if (!monaco || !editorRef.current || !activeFile || activeFile.isDiff) return;
+    const model = editorRef.current.getModel();
+    if (!model) return;
+
+    const normActive = activeFile.path.replace(/\\/g, '/').toLowerCase();
+    const fileDiagnostics = diagnostics.filter((d) => {
+      const normDiag = d.filePath.replace(/\\/g, '/').toLowerCase();
+      return normDiag === normActive || normActive.endsWith(normDiag) || normDiag.endsWith(normActive);
+    });
+
+    const markers = fileDiagnostics.map((d) => ({
+      severity:
+        d.severity === 'error'
+          ? monaco.MarkerSeverity.Error
+          : d.severity === 'warning'
+          ? monaco.MarkerSeverity.Warning
+          : monaco.MarkerSeverity.Info,
+      message: d.message,
+      startLineNumber: Math.max(1, d.line),
+      startColumn: Math.max(1, d.column),
+      endLineNumber: Math.max(1, d.line),
+      endColumn: Math.max(1, d.column + 8),
+      source: d.source || 'Compiler',
+    }));
+
+    monaco.editor.setModelMarkers(model, 'compiler-diagnostics', markers);
+  }, [monaco, diagnostics, activeFile]);
+
+  // Jump to specific problem line/col when user clicks in Problems panel
+  useEffect(() => {
+    if (!targetNavigation || !editorRef.current || !activeFile || activeFile.isDiff) return;
+    const normTarget = targetNavigation.filePath.replace(/\\/g, '/').toLowerCase();
+    const normActive = activeFile.path.replace(/\\/g, '/').toLowerCase();
+
+    if (normTarget === normActive || normActive.endsWith(normTarget) || normTarget.endsWith(normActive)) {
+      const { line, column } = targetNavigation;
+      editorRef.current.revealPositionInCenter({ lineNumber: line, column });
+      editorRef.current.setPosition({ lineNumber: line, column });
+      editorRef.current.focus();
+    }
+  }, [targetNavigation, activeFile]);
+
+  const handleAcceptInlineAi = (replacementCode: string) => {
+    if (!editorRef.current) return;
+    const editor = editorRef.current;
+    const selection = inlineAiSelection?.range || editor.getSelection();
+    if (selection && !selection.isEmpty()) {
+      editor.executeEdits('inline-ai', [{
+        range: selection,
+        text: replacementCode,
+        forceMoveMarkers: true,
+      }]);
+    } else {
+      const position = editor.getPosition();
+      if (position) {
+        editor.executeEdits('inline-ai', [{
+          range: new monaco.Range(position.lineNumber, 1, position.lineNumber, editor.getModel()?.getLineMaxColumn(position.lineNumber) || 1),
+          text: replacementCode,
+          forceMoveMarkers: true,
+        }]);
+      }
+    }
+    setShowInlineAi(false);
+    setInlineAiSelection(null);
+    onContentChange(editor.getValue());
+  };
 
   const handleTabClick = (index: number) => {
     onFileSelect(index);
@@ -120,6 +195,9 @@ export default function EditorArea({
   };
 
   const getFileIcon = (fileName: string) => {
+    if (fileName.includes('(Working Tree)') || fileName.startsWith('git-diff://')) {
+      return <GitCompare size={13} className="text-amber-400 shrink-0" />;
+    }
     const ext = fileName.split('.').pop()?.toLowerCase() || '';
     switch (ext) {
       case 'cpp':
@@ -191,15 +269,19 @@ export default function EditorArea({
   const hasTabs = isWelcomeOpen || openFiles.length > 0;
 
   return (
-    <div className="workbench-editor flex flex-1 flex-col overflow-hidden bg-[#1e1e1e] font-sans">
-      {/* VS Code Tab Bar */}
+    <div className="workbench-editor flex flex-1 flex-col overflow-hidden bg-[var(--editor-bg,#1e1e1e)] font-sans">
+      {/* VS Code Tab Bar - strict 35px */}
       {hasTabs && (
-        <div className="flex h-9 items-center justify-between border-b border-[#252526] bg-[#252526] select-none">
+        <div className="flex h-[35px] items-center justify-between border-b border-[var(--border-color,#252526)] bg-[var(--bg-secondary,#252526)] select-none">
           <div className="flex h-full items-center overflow-x-auto">
             {/* Welcome Tab (if open) */}
             {isWelcomeOpen && (
               <div
-                className="flex h-full items-center gap-2 px-3 border-r border-[#1e1e1e] text-xs cursor-pointer transition-colors bg-[#1e1e1e] text-white border-t border-t-[#007acc]"
+                className={`flex h-full items-center gap-2 px-3 border-r border-[var(--border-color,#1e1e1e)] text-xs cursor-pointer transition-colors ${
+                  showWelcome
+                    ? 'bg-[var(--editor-bg,#1e1e1e)] text-white border-t-2 border-t-[var(--accent-blue,#007acc)]'
+                    : 'bg-[var(--bg-tertiary,#2d2d2d)] text-[#858585] hover:text-white'
+                }`}
                 onClick={onSelectWelcome}
               >
                 <Code2 size={13} className="text-[#38bdf8]" />
@@ -223,10 +305,10 @@ export default function EditorArea({
               return (
                 <div
                   key={file.path}
-                  className={`flex h-full items-center gap-2 px-3 border-r border-[#1e1e1e] text-xs cursor-pointer transition-colors ${
+                  className={`flex h-full items-center gap-2 px-3 border-r border-[var(--border-color,#1e1e1e)] text-xs cursor-pointer transition-colors ${
                     isTabActive
-                      ? 'bg-[#1e1e1e] text-white border-t border-t-[#007acc]'
-                      : 'bg-[#2d2d2d] text-[#969696] hover:bg-[#282828]'
+                      ? 'bg-[var(--editor-bg,#1e1e1e)] text-white border-t-2 border-t-[var(--accent-blue,#007acc)] font-medium'
+                      : 'bg-[var(--bg-tertiary,#2d2d2d)] text-[#858585] hover:text-white'
                   }`}
                   onClick={() => handleTabClick(index)}
                 >
@@ -247,11 +329,65 @@ export default function EditorArea({
           </div>
 
           {/* Tab Right Actions */}
-          <div className="flex items-center gap-1.5 px-3 text-[#858585]">
+          <div className="flex items-center gap-1 px-2 text-[#858585]">
+            {activeFile && !activeFile.isDiff && (
+              <button
+                onClick={() => {
+                  const editor = editorRef.current;
+                  let text = '';
+                  let selection = null;
+                  if (editor) {
+                    selection = editor.getSelection();
+                    if (selection && !selection.isEmpty()) {
+                      text = editor.getModel()?.getValueInRange(selection) || '';
+                    }
+                  }
+                  setInlineAiSelection({ text, range: selection });
+                  setShowInlineAi(true);
+                }}
+                className="flex h-6 items-center gap-1 px-1.5 rounded-sm hover:bg-[#333333] hover:text-sky-400 text-[#858585] transition-colors text-[11px]"
+                title="Inline AI Composer (Ctrl+K)"
+              >
+                <Cpu size={13} className="text-sky-400" />
+                <span className="hidden xl:inline text-[10px] font-medium">Ctrl+K</span>
+              </button>
+            )}
+            {onBuildCpp && activeFile && (
+              <button
+                onClick={onBuildCpp}
+                className="flex h-6 items-center gap-1 px-1.5 rounded-sm hover:bg-[#333333] hover:text-[#38bdf8] text-[#858585] transition-colors text-[11px]"
+                title="Build / Compile File (Ctrl+Shift+B)"
+              >
+                <Zap size={13} className="text-[#38bdf8]" />
+                <span className="hidden xl:inline text-[10px] font-medium">Build</span>
+              </button>
+            )}
+
+            {onRunCode && activeFile && (
+              <button
+                onClick={onRunCode}
+                className="flex h-6 items-center gap-1 px-1.5 rounded-sm hover:bg-[#333333] hover:text-emerald-400 text-[#858585] transition-colors text-[11px]"
+                title="Run / Compile & Run (F5)"
+              >
+                <Play size={12} className="text-emerald-400 fill-current" />
+                <span className="hidden xl:inline text-[10px] font-medium">Run</span>
+              </button>
+            )}
+
+            {onOpenCompilerConfig && (
+              <button
+                onClick={onOpenCompilerConfig}
+                className="flex h-6 w-6 items-center justify-center rounded-sm hover:bg-[#333333] hover:text-white transition-colors"
+                title="Compiler & Build Settings"
+              >
+                <Settings2 size={13} />
+              </button>
+            )}
+
             <button
               onClick={onToggleSplit}
-              className={`p-1 rounded hover:bg-[#333333] hover:text-white transition-colors ${
-                isSplit ? 'text-[#007acc]' : 'text-[#858585]'
+              className={`flex h-6 w-6 items-center justify-center rounded-sm hover:bg-[#333333] hover:text-white transition-colors ${
+                isSplit ? 'text-[var(--accent-blue,#007acc)]' : 'text-[#858585]'
               }`}
               title="Split Editor Right"
             >
@@ -290,35 +426,83 @@ export default function EditorArea({
             ))}
           </div>
 
-          {/* Monaco Editor */}
-          <div className="flex-1 overflow-hidden">
-            <Editor
-              height="100%"
-              path={activeFile.path}
-              defaultLanguage={getMonacoLanguage(activeFile.name)}
-              language={getMonacoLanguage(activeFile.name)}
-              value={activeFile.content}
-              theme="onyx-code-dark"
-              onChange={(value) => onContentChange(value ?? '')}
-              onMount={(editor) => {
-                editorRef.current = editor;
-              }}
-              options={{
-                fontFamily: settings?.fontFamily || "'Fira Code', 'Consolas', 'Courier New', monospace",
-                fontSize: settings?.fontSize ?? 14,
-                tabSize: settings?.tabSize ?? 4,
-                minimap: { enabled: true },
-                wordWrap: settings?.wordWrap ? 'on' : 'off',
-                automaticLayout: true,
-                renderWhitespace: 'selection',
-                cursorBlinking: 'smooth',
-                smoothScrolling: true,
-                lineNumbers: settings?.lineNumbers ? 'on' : 'off',
-                renderLineHighlight: 'all',
-                scrollBeyondLastLine: false,
-                padding: { top: 6 },
-              }}
-            />
+          {/* Monaco Editor / Diff Editor */}
+          <div className="flex-1 overflow-hidden relative">
+            {showInlineAi && activeFile && !activeFile.isDiff && (
+              <InlineAIWidget
+                selectedText={inlineAiSelection?.text || ''}
+                language={getMonacoLanguage(activeFile.name)}
+                fileName={activeFile.name}
+                model={selectedAiModel || localStorage.getItem('onyx_selected_model') || 'qwen2.5-coder:7b'}
+                onAccept={handleAcceptInlineAi}
+                onClose={() => {
+                  setShowInlineAi(false);
+                  setInlineAiSelection(null);
+                }}
+              />
+            )}
+
+            {activeFile.isDiff ? (
+              <DiffEditor
+                height="100%"
+                original={activeFile.originalContent || ''}
+                modified={activeFile.content}
+                language={getMonacoLanguage(activeFile.name)}
+                theme={`onyx-${settings?.theme || 'dark'}`}
+                options={{
+                  fontFamily: settings?.fontFamily || "'Fira Code', 'Consolas', 'Courier New', monospace",
+                  fontSize: settings?.fontSize ?? 14,
+                  readOnly: true,
+                  renderSideBySide: true,
+                  automaticLayout: true,
+                  minimap: { enabled: false },
+                  smoothScrolling: true,
+                  scrollBeyondLastLine: false,
+                }}
+              />
+            ) : (
+              <Editor
+                height="100%"
+                path={activeFile.path}
+                defaultLanguage={getMonacoLanguage(activeFile.name)}
+                language={getMonacoLanguage(activeFile.name)}
+                value={activeFile.content}
+                theme={`onyx-${settings?.theme || 'dark'}`}
+                onChange={(value) => onContentChange(value ?? '')}
+                onMount={(editor, m) => {
+                  editorRef.current = editor;
+                  editor.addAction({
+                    id: 'onyx-inline-ai',
+                    label: 'Inline AI Composer (Ctrl+K)',
+                    keybindings: [m.KeyMod.CtrlCmd | m.KeyCode.KeyK],
+                    run: (ed: any) => {
+                      const selection = ed.getSelection();
+                      let text = '';
+                      if (selection && !selection.isEmpty()) {
+                        text = ed.getModel()?.getValueInRange(selection) || '';
+                      }
+                      setInlineAiSelection({ text, range: selection });
+                      setShowInlineAi(true);
+                    },
+                  });
+                }}
+                options={{
+                  fontFamily: settings?.fontFamily || "'Fira Code', 'Consolas', 'Courier New', monospace",
+                  fontSize: settings?.fontSize ?? 14,
+                  tabSize: settings?.tabSize ?? 4,
+                  minimap: { enabled: true },
+                  wordWrap: settings?.wordWrap ? 'on' : 'off',
+                  automaticLayout: true,
+                  renderWhitespace: 'selection',
+                  cursorBlinking: 'smooth',
+                  smoothScrolling: true,
+                  lineNumbers: settings?.lineNumbers ? 'on' : 'off',
+                  renderLineHighlight: 'all',
+                  scrollBeyondLastLine: false,
+                  padding: { top: 6 },
+                }}
+              />
+            )}
           </div>
         </div>
       ) : (

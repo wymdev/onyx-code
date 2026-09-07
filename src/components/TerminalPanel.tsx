@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { ChevronDown, Columns, Plus, RotateCcw, TerminalSquare, Trash2, X } from 'lucide-react';
 import '@xterm/xterm/css/xterm.css';
+import { runtime } from '../platform/runtime';
 
 type ProfileId = 'powershell' | 'cmd' | 'gitbash';
 
@@ -71,28 +72,28 @@ function TerminalInstance({ session, visible }: { session: TerminalSession; visi
       if (!container.offsetWidth || !container.offsetHeight) return;
       try {
         fit.fit();
-        window.runtime?.resizeTerminal?.(session.id, terminal.cols, terminal.rows);
+        runtime.resizeTerminal(session.id, terminal.cols, terminal.rows);
       } catch {
         // A panel resize can race with a hidden session; the next observer pass will fit it.
       }
     };
 
-    const unsubscribeData = window.runtime?.onTerminalData?.((payload) => {
+    const unsubscribeData = runtime.onTerminalData((payload) => {
       if (payload.id === session.id) terminal.write(payload.data);
     });
-    const unsubscribeExit = window.runtime?.onTerminalExit?.((payload) => {
+    const unsubscribeExit = runtime.onTerminalExit((payload) => {
       if (payload.id === session.id) {
         terminal.write(`\r\n\x1b[33mProcess exited with code ${payload.exitCode}. Use Restart to open it again.\x1b[0m\r\n`);
       }
     });
-    const inputDisposable = terminal.onData((data) => window.runtime?.sendTerminalInput?.(session.id, data));
+    const inputDisposable = terminal.onData((data) => runtime.sendTerminalInput(session.id, data));
     const resizeObserver = new ResizeObserver(fitAndSync);
     resizeObserver.observe(container);
 
     requestAnimationFrame(() => {
       fitAndSync();
-      if (window.runtime?.createTerminal) {
-        window.runtime.createTerminal({
+      if (runtime.hasInteractiveTerminal()) {
+        runtime.createTerminal({
           id: session.id,
           profile: session.profile,
           cols: terminal.cols,
@@ -106,9 +107,9 @@ function TerminalInstance({ session, visible }: { session: TerminalSession; visi
     return () => {
       resizeObserver.disconnect();
       inputDisposable.dispose();
-      unsubscribeData?.();
-      unsubscribeExit?.();
-      window.runtime?.killTerminal?.(session.id);
+      unsubscribeData();
+      unsubscribeExit();
+      runtime.killTerminal(session.id);
       terminal.dispose();
       terminalRef.current = null;
       fitRef.current = null;
@@ -121,7 +122,7 @@ function TerminalInstance({ session, visible }: { session: TerminalSession; visi
       try {
         fitRef.current?.fit();
         const terminal = terminalRef.current;
-        if (terminal) window.runtime?.resizeTerminal?.(session.id, terminal.cols, terminal.rows);
+        if (terminal) runtime.resizeTerminal(session.id, terminal.cols, terminal.rows);
         terminal?.focus();
       } catch {
         // The session may still be mounting.
@@ -147,7 +148,11 @@ export default function TerminalPanel() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    window.runtime?.getTerminalProfiles?.().then((availableProfiles) => {
+    runtime.getTerminalProfiles().then((availableProfiles) => {
+      if (!availableProfiles) {
+        setProfiles(FALLBACK_PROFILES);
+        return;
+      }
       setProfiles(availableProfiles);
       if (!availableProfiles.some((profile) => profile.id === defaultProfile && profile.available)) {
         setDefaultProfile(availableProfiles.find((profile) => profile.available)?.id || 'powershell');

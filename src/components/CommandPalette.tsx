@@ -10,6 +10,7 @@ import {
   TerminalSquare,
   Zap,
 } from 'lucide-react';
+import { plugins } from '../platform/plugins';
 
 interface Command {
   id: string;
@@ -172,7 +173,7 @@ export default function CommandPalette({
         description: `Plugin command from ${command.pluginId}`,
         icon: Box,
         action: () => {
-          window.plugins?.invokeCommand(command.id).catch((error) => {
+          plugins.invokeCommand(command.id).catch((error) => {
             alert(error instanceof Error ? error.message : 'Plugin command failed');
           });
           onClose();
@@ -199,7 +200,7 @@ export default function CommandPalette({
       return;
     }
     setQuery('');
-    window.plugins?.commands().then(setPluginCommands).catch(() => setPluginCommands([]));
+    plugins.commands().then(setPluginCommands).catch(() => setPluginCommands([]));
     setTimeout(() => inputRef.current?.focus(), 50);
   }, [isOpen]);
 

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  ArrowRight,
   Minus,
   PanelBottom,
   PanelLeft,
@@ -10,6 +9,7 @@ import {
   X,
 } from 'lucide-react';
 import OnyxCodeLogo from './OnyxCodeLogo';
+import { appWindow } from '../platform/window';
 
 interface MenuItemDef {
   label: string;
@@ -25,7 +25,7 @@ interface MenuDef {
 }
 
 interface TitleBarProps {
-  workspaceName?: string;
+  workspaceName?: string | null;
   onNewFile?: () => void;
   onOpenFile?: () => void;
   onOpenFolder?: () => void;
@@ -46,6 +46,7 @@ interface TitleBarProps {
   onSearchInProject?: () => void;
   onRunCode?: () => void;
   onBuildCpp?: () => void;
+  onOpenCompilerConfig?: () => void;
   onStopExecution?: () => void;
   onRestartExecution?: () => void;
   onViewOutput?: () => void;
@@ -67,7 +68,7 @@ interface TitleBarProps {
 }
 
 export default function TitleBar({
-  workspaceName = 'virgoai',
+  workspaceName = null,
   onNewFile,
   onOpenFile,
   onOpenFolder,
@@ -88,6 +89,7 @@ export default function TitleBar({
   onSearchInProject,
   onRunCode,
   onBuildCpp,
+  onOpenCompilerConfig,
   onStopExecution,
   onRestartExecution,
   onViewOutput,
@@ -109,14 +111,14 @@ export default function TitleBar({
 }: TitleBarProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuBarRef = useRef<HTMLDivElement>(null);
-  const isMacOS = window.electronAPI?.platform === 'darwin';
+  const isMacOS = appWindow.isMac();
 
   const menus: MenuDef[] = [
     {
       label: 'File',
       items: [
         { label: 'New File', shortcut: 'Ctrl+N', action: onNewFile },
-        { label: 'New Window', shortcut: 'Ctrl+Shift+N', action: () => window.electronAPI?.newWindow() },
+        { label: 'New Window', shortcut: 'Ctrl+Shift+N', action: () => appWindow.newWindow() },
         { separator: true, label: '' },
         { label: 'Open File...', shortcut: 'Ctrl+O', action: onOpenFile },
         { label: 'Open Folder...', shortcut: 'Ctrl+Shift+O', action: onOpenFolder },
@@ -127,7 +129,7 @@ export default function TitleBar({
         { separator: true, label: '' },
         { label: 'Close File', shortcut: 'Ctrl+W', action: onCloseFile },
         { separator: true, label: '' },
-        { label: 'Exit', action: () => window.electronAPI?.close() },
+        { label: 'Exit', action: () => appWindow.close() },
       ],
     },
     {
@@ -179,7 +181,9 @@ export default function TitleBar({
       label: 'Run',
       items: [
         { label: 'Start Debugging / Run', shortcut: 'F5', action: onRunCode },
-        { label: 'Build C++ File (g++)', shortcut: 'Ctrl+Shift+B', action: onBuildCpp ?? onRunCode },
+        { label: 'Build Active File', shortcut: 'Ctrl+Shift+B', action: onBuildCpp ?? onRunCode },
+        { label: 'Compiler & Build Settings...', action: onOpenCompilerConfig },
+        { separator: true, label: '' },
         { label: 'Stop Execution', shortcut: 'Shift+F5', action: onStopExecution },
         { label: 'Restart Debugging', shortcut: 'Ctrl+Shift+F5', action: onRestartExecution },
       ],
@@ -240,24 +244,24 @@ export default function TitleBar({
   if (isMacOS) return null;
 
   return (
-    <div className="workbench-titlebar drag-region relative z-50 flex h-[35px] w-full shrink-0 items-center justify-between border-b border-[#2b2b36] bg-[#18181b] px-2 text-[#cccccc] font-sans text-xs select-none">
+    <div className="workbench-titlebar drag-region relative z-50 flex h-[35px] w-full shrink-0 items-center justify-between border-b border-[var(--border-color,#2b2b36)] bg-[var(--titlebar-bg,#18181b)] px-2 text-[var(--text-primary,#cccccc)] font-sans text-xs select-none">
       {/* Left section: Logo & Menus */}
       <div
         ref={menuBarRef}
-        className="no-drag flex h-full items-center"
+        className="no-drag flex h-full items-center gap-1"
       >
         <div className="flex h-full items-center px-1.5 cursor-pointer">
-          <OnyxCodeLogo size={19} />
+          <OnyxCodeLogo size={18} />
         </div>
 
-        <div className="flex h-full items-center ml-1">
+        <div className="flex h-full items-center">
           {menus.map((menu) => (
-            <div key={menu.label} className="relative h-full">
+            <div key={menu.label} className="relative flex items-center h-full">
               <button
-                className={`flex h-full items-center px-2 text-[12px] transition-colors rounded-sm my-1 ${
+                className={`flex h-[24px] items-center px-2 text-[12px] transition-colors rounded-sm ${
                   openMenu === menu.label
-                    ? 'bg-[#27272a] text-white'
-                    : 'text-[#a1a1aa] hover:bg-[#27272a] hover:text-white'
+                    ? 'bg-[#2a2d2e] text-white'
+                    : 'text-[#a1a1aa] hover:bg-[#2a2d2e] hover:text-white'
                 }`}
                 onClick={() => setOpenMenu((curr) => (curr === menu.label ? null : menu.label))}
                 onMouseEnter={() => openMenu && setOpenMenu(menu.label)}
@@ -266,10 +270,10 @@ export default function TitleBar({
               </button>
 
               {openMenu === menu.label && (
-                <div className="absolute left-0 top-full z-[300] min-w-[230px] rounded-md border border-[#27272a] bg-[#1f1f23] py-1 shadow-2xl">
+                <div className="absolute left-0 top-[31px] z-[300] min-w-[230px] rounded-md border border-[var(--border-color,#27272a)] bg-[var(--bg-secondary,#1f1f23)] py-1 shadow-2xl">
                   {menu.items.map((item, index) =>
                     item.separator ? (
-                      <div key={`${menu.label}-sep-${index}`} className="my-1 border-t border-[#27272a]" />
+                      <div key={`${menu.label}-sep-${index}`} className="my-1 border-t border-[var(--border-color,#27272a)]" />
                     ) : (
                       <button
                         key={`${menu.label}-${item.label}-${index}`}
@@ -293,26 +297,29 @@ export default function TitleBar({
         </div>
       </div>
 
-      {/* Center Search / Navigation Pill matching screenshot */}
+      {/* Center Search / Navigation Pill matching VS Code */}
       <div className="no-drag absolute left-1/2 -translate-x-1/2 flex items-center">
         <button
           onClick={onCommandPalette}
-          className="group flex h-[24px] w-[340px] items-center justify-center gap-2 rounded-md border border-[#27272a] bg-[#27272a]/60 px-3 text-xs text-[#a1a1aa] transition-all hover:border-[#38bdf8]/50 hover:bg-[#27272a] hover:text-white"
+          className="group flex h-[24px] w-[360px] max-w-[40vw] items-center gap-2 rounded-md border border-[#3c3c3c] bg-[#252526] px-3 text-xs text-[#a1a1aa] transition-all hover:border-[var(--accent-blue,#007acc)] hover:text-white shadow-sm"
+          title="Search files, commands (Ctrl+P)"
         >
-          <ArrowRight size={13} className="text-[#38bdf8] opacity-80" />
-          <span className="font-mono text-[11px] text-[#cccccc]">{workspaceName}</span>
+          <Search size={12} className="text-[#858585] group-hover:text-[#38bdf8] shrink-0 transition-colors" />
+          <span className="text-[11px] text-[#cccccc] font-medium truncate">
+            {workspaceName || 'Onyx Code'}
+          </span>
           <div className="flex-1" />
-          <Search size={12} className="text-[#71717a] group-hover:text-[#38bdf8]" />
+          <span className="text-[10px] text-[#6e6e6e] font-sans shrink-0">Ctrl+P</span>
         </button>
       </div>
 
       {/* Right Layout & Window Controls */}
-      <div className="no-drag flex h-full items-center gap-0.5">
+      <div className="no-drag flex h-full items-center gap-1">
         {/* Layout Controls */}
         <button
           onClick={onToggleSidebar}
-          className={`flex h-7 w-7 items-center justify-center rounded-sm transition-colors ${
-            showSidebar ? 'text-white hover:bg-[#333333]' : 'text-[#858585] hover:bg-[#333333]'
+          className={`flex h-[26px] w-[26px] items-center justify-center rounded-sm transition-colors ${
+            showSidebar ? 'text-white bg-[#2a2d2e]' : 'text-[#858585] hover:bg-[#2a2d2e] hover:text-white'
           }`}
           title="Toggle Primary Side Bar (Ctrl+B)"
         >
@@ -321,8 +328,8 @@ export default function TitleBar({
 
         <button
           onClick={onToggleBottomPanel}
-          className={`flex h-7 w-7 items-center justify-center rounded-sm transition-colors ${
-            showBottomPanel ? 'text-white hover:bg-[#333333]' : 'text-[#858585] hover:bg-[#333333]'
+          className={`flex h-[26px] w-[26px] items-center justify-center rounded-sm transition-colors ${
+            showBottomPanel ? 'text-white bg-[#2a2d2e]' : 'text-[#858585] hover:bg-[#2a2d2e] hover:text-white'
           }`}
           title="Toggle Panel (Ctrl+`)"
         >
@@ -331,34 +338,44 @@ export default function TitleBar({
 
         <button
           onClick={onToggleAIPanel}
-          className={`flex h-7 w-7 items-center justify-center rounded-sm transition-colors ${
-            showAIPanel ? 'text-white hover:bg-[#333333]' : 'text-[#858585] hover:bg-[#333333]'
+          className={`flex h-[26px] w-[26px] items-center justify-center rounded-sm transition-colors ${
+            showAIPanel ? 'text-white bg-[#2a2d2e]' : 'text-[#858585] hover:bg-[#2a2d2e] hover:text-white'
           }`}
           title="Toggle Local AI Assistant"
         >
           <PanelRight size={14} />
         </button>
 
-        {/* macOS supplies native traffic lights on the left. */}
-        {!isMacOS && (
-          <div className="flex items-center ml-2">
+        {/* If in web browser preview, show a helpful badge */}
+        {!appWindow.isAvailable() && (
+          <span
+            className="px-2 py-0.5 ml-2 mr-3 rounded text-[10px] font-medium bg-amber-500/15 text-amber-300 border border-amber-500/25 select-none"
+            title="Running in Web Preview. For full desktop terminal, GCC/G++ compilers, and native dialogs, launch with 'npm run dev' or 'npm run electron:dev'."
+          >
+            Web Preview
+          </span>
+        )}
+
+        {/* Electron desktop window controls (Windows / Linux) */}
+        {appWindow.isAvailable() && !isMacOS && (
+          <div className="flex items-center ml-1.5 h-full">
             <button
-              onClick={() => window.electronAPI?.minimize()}
-              className="flex h-[35px] w-[42px] items-center justify-center text-[#a1a1aa] transition-colors hover:bg-[#27272a] hover:text-white"
+              onClick={() => appWindow.minimize()}
+              className="flex h-[35px] w-[46px] items-center justify-center text-[#a1a1aa] transition-colors hover:bg-[#2a2d2e] hover:text-white"
               title="Minimize"
             >
               <Minus size={14} />
             </button>
             <button
-              onClick={() => window.electronAPI?.maximize()}
-              className="flex h-[35px] w-[42px] items-center justify-center text-[#a1a1aa] transition-colors hover:bg-[#27272a] hover:text-white"
+              onClick={() => appWindow.maximize()}
+              className="flex h-[35px] w-[46px] items-center justify-center text-[#a1a1aa] transition-colors hover:bg-[#2a2d2e] hover:text-white"
               title="Maximize"
             >
               <Square size={12} />
             </button>
             <button
-              onClick={() => window.electronAPI?.close()}
-              className="flex h-[35px] w-[42px] items-center justify-center text-[#a1a1aa] transition-colors hover:bg-[#e81123] hover:text-white"
+              onClick={() => appWindow.close()}
+              className="flex h-[35px] w-[46px] items-center justify-center text-[#a1a1aa] transition-colors hover:bg-[#e81123] hover:text-white"
               title="Close"
             >
               <X size={15} />

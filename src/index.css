@@ -83,6 +83,131 @@
   --workbench-border: #d4d4d4;
 }
 
+:root[data-color-theme='dracula'] {
+  --bg-primary: #282a36;
+  --bg-secondary: #21222c;
+  --bg-tertiary: #343746;
+  --bg-hover: #44475a;
+  --bg-active: #44475a;
+  --border-color: #343746;
+  --border-active: #bd93f9;
+  --text-primary: #f8f8f2;
+  --text-secondary: #9ca0b0;
+  --text-muted: #6272a4;
+  --accent-blue: #bd93f9;
+  --titlebar-bg: #191a21;
+  --activity-bar-bg: #191a21;
+  --sidebar-bg: #21222c;
+  --editor-bg: #282a36;
+  --panel-bg: #21222c;
+  --status-bar-bg: #191a21;
+  --workbench-bg: #21222c;
+  --workbench-sidebar: #21222c;
+  --workbench-editor: #282a36;
+  --workbench-panel: #21222c;
+  --workbench-border: #343746;
+}
+
+:root[data-color-theme='one-dark-pro'] {
+  --bg-primary: #282c34;
+  --bg-secondary: #21252b;
+  --bg-tertiary: #2c313a;
+  --bg-hover: #353b45;
+  --bg-active: #3e4451;
+  --border-color: #181a1f;
+  --border-active: #61afef;
+  --text-primary: #abb2bf;
+  --text-secondary: #828997;
+  --text-muted: #5c6370;
+  --accent-blue: #61afef;
+  --titlebar-bg: #21252b;
+  --activity-bar-bg: #21252b;
+  --sidebar-bg: #21252b;
+  --editor-bg: #282c34;
+  --panel-bg: #21252b;
+  --status-bar-bg: #21252b;
+  --workbench-bg: #21252b;
+  --workbench-sidebar: #21252b;
+  --workbench-editor: #282c34;
+  --workbench-panel: #21252b;
+  --workbench-border: #181a1f;
+}
+
+:root[data-color-theme='tokyo-night'] {
+  --bg-primary: #1a1b26;
+  --bg-secondary: #16161e;
+  --bg-tertiary: #24283b;
+  --bg-hover: #292e42;
+  --bg-active: #343b58;
+  --border-color: #1f2335;
+  --border-active: #7aa2f7;
+  --text-primary: #c0caf5;
+  --text-secondary: #9aa5ce;
+  --text-muted: #565f89;
+  --accent-blue: #7aa2f7;
+  --titlebar-bg: #16161e;
+  --activity-bar-bg: #16161e;
+  --sidebar-bg: #16161e;
+  --editor-bg: #1a1b26;
+  --panel-bg: #16161e;
+  --status-bar-bg: #16161e;
+  --workbench-bg: #16161e;
+  --workbench-sidebar: #16161e;
+  --workbench-editor: #1a1b26;
+  --workbench-panel: #16161e;
+  --workbench-border: #1f2335;
+}
+
+:root[data-color-theme='github-dark'] {
+  --bg-primary: #0d1117;
+  --bg-secondary: #010409;
+  --bg-tertiary: #161b22;
+  --bg-hover: #21262d;
+  --bg-active: #30363d;
+  --border-color: #21262d;
+  --border-active: #2f81f7;
+  --text-primary: #c9d1d9;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --accent-blue: #2f81f7;
+  --titlebar-bg: #010409;
+  --activity-bar-bg: #010409;
+  --sidebar-bg: #010409;
+  --editor-bg: #0d1117;
+  --panel-bg: #010409;
+  --status-bar-bg: #010409;
+  --workbench-bg: #010409;
+  --workbench-sidebar: #010409;
+  --workbench-editor: #0d1117;
+  --workbench-panel: #010409;
+  --workbench-border: #21262d;
+}
+
+:root[data-color-theme='monokai'] {
+  --bg-primary: #272822;
+  --bg-secondary: #1e1f1c;
+  --bg-tertiary: #383830;
+  --bg-hover: #49483e;
+  --bg-active: #49483e;
+  --border-color: #383830;
+  --border-active: #a6e22e;
+  --text-primary: #f8f8f2;
+  --text-secondary: #cfcfc2;
+  --text-muted: #75715e;
+  --accent-blue: #a6e22e;
+  --titlebar-bg: #1e1f1c;
+  --activity-bar-bg: #1e1f1c;
+  --sidebar-bg: #1e1f1c;
+  --editor-bg: #272822;
+  --panel-bg: #1e1f1c;
+  --status-bar-bg: #1e1f1c;
+  --workbench-bg: #1e1f1c;
+  --workbench-sidebar: #1e1f1c;
+  --workbench-editor: #272822;
+  --workbench-panel: #1e1f1c;
+  --workbench-border: #383830;
+}
+
 .workbench-shell {
   background-color: var(--workbench-bg);
   color: var(--text-primary);
@@ -336,3 +461,60 @@ body {
 .breadcrumb-item:hover {
   color: var(--text-primary);
 }
+
+/* ==========================================================================
+   VS Code / Onyx Custom Checkbox Design
+   ========================================================================== */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  min-width: 15px;
+  min-height: 15px;
+  background-color: var(--bg-primary, #1e1e1e);
+  border: 1px solid var(--border-color, #3e3e42);
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.12s cubic-bezier(0.4, 0, 0.2, 1);
+  outline: none;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+input[type="checkbox"]:hover {
+  border-color: var(--accent-blue, #007acc);
+  background-color: var(--bg-hover, #2a2d2e);
+}
+
+input[type="checkbox"]:focus-visible {
+  border-color: var(--accent-blue, #007acc);
+  box-shadow: 0 0 0 1.5px rgba(0, 122, 204, 0.45);
+}
+
+input[type="checkbox"]:checked {
+  background-color: var(--accent-blue, #007acc) !important;
+  border-color: var(--accent-blue, #007acc) !important;
+}
+
+input[type="checkbox"]:checked::after {
+  content: '';
+  width: 4px;
+  height: 8px;
+  border: solid #ffffff;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+  position: absolute;
+  top: 1px;
+  left: 4.5px;
+}
+
+input[type="checkbox"]:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+

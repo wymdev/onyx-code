@@ -1,35 +1,36 @@
+import { auth as authBridge } from '../platform/auth';
 import { AuthResponse, SessionResponse } from '../types';
 
 export const authService = {
   register(data: { username: string; email: string; password: string }): Promise<AuthResponse> {
-    if (!window.auth) {
+    if (!authBridge.isAvailable()) {
       return Promise.resolve({ success: false, error: 'Auth bridge is unavailable' });
     }
 
-    return window.auth.register(data);
+    return authBridge.register(data) as Promise<AuthResponse>;
   },
 
   login(data: { email: string; password: string }): Promise<AuthResponse> {
-    if (!window.auth) {
+    if (!authBridge.isAvailable()) {
       return Promise.resolve({ success: false, error: 'Auth bridge is unavailable' });
     }
 
-    return window.auth.login(data);
+    return authBridge.login(data) as Promise<AuthResponse>;
   },
 
   logout(): Promise<{ success: boolean }> {
-    if (!window.auth) {
+    if (!authBridge.isAvailable()) {
       return Promise.resolve({ success: false });
     }
 
-    return window.auth.logout().then(() => ({ success: true }));
+    return authBridge.logout().then(() => ({ success: true }));
   },
 
   checkSession(): Promise<SessionResponse> {
-    if (!window.auth) {
+    if (!authBridge.isAvailable()) {
       return Promise.resolve({ success: false });
     }
 
-    return window.auth.checkSession();
+    return authBridge.checkSession() as Promise<SessionResponse>;
   },
 };

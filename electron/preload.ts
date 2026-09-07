@@ -81,7 +81,10 @@ contextBridge.exposeInMainWorld('feedback', {
 contextBridge.exposeInMainWorld('runtime', {
   runCurrentFile: (filePath: string) => ipcRenderer.invoke('run-current-file', filePath),
   compileCppFile: (filePath: string, runAfter = false) => ipcRenderer.invoke('compile-cpp-file', filePath, runAfter),
+  compileFile: (filePath: string, config?: any, runAfter = false) => ipcRenderer.invoke('compile-file', filePath, config, runAfter),
   detectCppCompilers: () => ipcRenderer.invoke('detect-cpp-compilers'),
+  detectAllToolchains: () => ipcRenderer.invoke('detect-all-toolchains'),
+  cleanBuildArtifacts: (targetDir?: string) => ipcRenderer.invoke('clean-build-artifacts', targetDir),
   stopRun: () => ipcRenderer.invoke('stop-run'),
   restartRun: () => ipcRenderer.invoke('restart-run'),
   onRunOutput: (callback: (payload: RunOutputEvent) => void) => {
@@ -122,6 +125,7 @@ contextBridge.exposeInMainWorld('git', {
   branch: () => ipcRenderer.invoke('git-branch'),
   add: (file: string) => ipcRenderer.invoke('git-add', file),
   commit: (message: string) => ipcRenderer.invoke('git-commit', message),
+  diff: (file: string) => ipcRenderer.invoke('git-diff', file),
 });
 
 contextBridge.exposeInMainWorld('profile', {
@@ -160,4 +164,8 @@ contextBridge.exposeInMainWorld('plugins', {
     ipcRenderer.on('plugin-message', listener);
     return () => ipcRenderer.removeListener('plugin-message', listener);
   },
+});
+
+contextBridge.exposeInMainWorld('vscode', {
+  readSettings: () => ipcRenderer.invoke('read-vscode-settings'),
 });

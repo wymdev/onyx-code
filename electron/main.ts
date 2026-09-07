@@ -497,7 +497,97 @@ async function detectCppCompilers() {
   return results;
 }
 
-async function compileAndRunCpp(filePath: string, runAfter = true) {
+async function detectAllToolchains() {
+  const candidates = [
+    { id: 'gcc-cpp', name: 'GCC (g++)', cmd: 'g++', versionArg: '--version' },
+    { id: 'clang-cpp', name: 'Clang (clang++)', cmd: 'clang++', versionArg: '--version' },
+    { id: 'msvc-cl', name: 'MSVC (cl.exe)', cmd: 'cl', versionArg: '' },
+    { id: 'gcc-c', name: 'GCC (gcc)', cmd: 'gcc', versionArg: '--version' },
+    { id: 'rustc', name: 'Rust (rustc)', cmd: 'rustc', versionArg: '--version' },
+    { id: 'cargo', name: 'Rust Cargo', cmd: 'cargo', versionArg: '--version' },
+    { id: 'python', name: 'Python 3', cmd: 'python', versionArg: '--version' },
+    { id: 'go', name: 'Go Toolchain', cmd: 'go', versionArg: 'version' },
+    { id: 'javac', name: 'Java (javac)', cmd: 'javac', versionArg: '-version' },
+    { id: 'node', name: 'Node.js', cmd: 'node', versionArg: '--version' },
+  ];
+
+  const results = [];
+  for (const c of candidates) {
+    try {
+      const testCmd = process.platform === 'win32' ? `where ${c.cmd}` : `which ${c.cmd}`;
+      const { stdout: binPath } = await execAsync(testCmd);
+      let version = 'Installed';
+      if (c.versionArg) {
+        try {
+          const { stdout, stderr } = await execAsync(`${c.cmd} ${c.versionArg}`);
+          const raw = (stdout || stderr || '').split(/\r?\n/)[0];
+          version = raw.slice(0, 60).trim();
+        } catch {}
+      }
+      results.push({
+        id: c.id,
+        name: c.name,
+        command: c.cmd,
+        available: true,
+        version,
+        path: binPath.split(/\r?\n/)[0].trim(),
+      });
+    } catch {
+      results.push({
+        id: c.id,
+        name: c.name,
+        command: c.cmd,
+        available: false,
+        version: 'Not found on PATH',
+      });
+    }
+  }
+  return results;
+}
+
+async function cleanBuildArtifacts(targetDir?: string) {
+  const dir = targetDir || currentWorkspaceRoot;
+  if (!dir) return { count: 0 };
+  assertWorkspacePath(dir);
+
+  const extensionsToRemove = new Set(['.exe', '.o', '.obj', '.out', '.s', '.class', '.pdb', '.ilk', '.pyc']);
+  let removedCount = 0;
+
+  async function cleanRecursive(folder: string) {
+    const entries = await fs.readdir(folder, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = path.join(folder, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '.git') continue;
+        if (entry.name === '__pycache__') {
+          await fs.rm(full, { recursive: true, force: true });
+          removedCount++;
+          continue;
+        }
+        await cleanRecursive(full);
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase();
+        if (extensionsToRemove.has(ext)) {
+          await fs.unlink(full);
+          removedCount++;
+        }
+      }
+    }
+  }
+
+  try {
+    await cleanRecursive(dir);
+    return { success: true, count: removedCount };
+  } catch (err: any) {
+    return { success: false, error: err.message, count: removedCount };
+  }
+}
+
+async function compileAndRunCpp(filePath: string, runAfter = true, config?: any) {
+  return compileAndRunFile(filePath, config, runAfter);
+}
+
+async function compileAndRunFile(filePath: string, config?: any, runAfter = true) {
   assertWorkspacePath(filePath);
 
   if (activeRunProcess) {
@@ -506,85 +596,292 @@ async function compileAndRunCpp(filePath: string, runAfter = true) {
 
   lastRunFilePath = filePath;
   const cwd = currentWorkspaceRoot ?? path.dirname(filePath);
-  const ext = path.extname(filePath);
+  const ext = path.extname(filePath).toLowerCase();
   const baseName = path.basename(filePath, ext);
   const outExt = process.platform === 'win32' ? '.exe' : '';
   const outPath = path.join(path.dirname(filePath), `${baseName}${outExt}`);
 
-  sendRunEvent('run-output', { type: 'system', message: `=== [C++ Build Started: ${path.basename(filePath)}] ===` });
+  // C / C++ Compilation
+  if (['.cpp', '.cc', '.cxx', '.c', '.hpp', '.h'].includes(ext)) {
+    const isC = ext === '.c' || ext === '.h';
+    const compilers = await detectCppCompilers();
+    const activeCompiler = isC
+      ? compilers.find((c) => c.command === 'gcc' && c.available)?.command || 'gcc'
+      : compilers.find((c) => c.available)?.command || 'g++';
+
+    const compileArgs: string[] = [];
+    if (isC) {
+      compileArgs.push(`-std=${config?.cStandard || 'c17'}`);
+    } else {
+      compileArgs.push(`-std=${config?.cppStandard || 'c++20'}`);
+    }
+
+    compileArgs.push(`-${config?.optimization || 'O2'}`);
+
+    if (config?.debugSymbols !== false) compileArgs.push('-g');
+    if (config?.warnings === 'all' || !config?.warnings) compileArgs.push('-Wall');
+    if (config?.warnings === 'extra') compileArgs.push('-Wall', '-Wextra');
+    if (config?.treatWarningsAsErrors) compileArgs.push('-Werror');
+
+    // Assembly Emission Mode (-S)
+    if (config?.emitAssembly) {
+      const asmPath = path.join(path.dirname(filePath), `${baseName}.s`);
+      compileArgs.push('-S', '-masm=intel', '-fverbose-asm', filePath, '-o', asmPath);
+      sendRunEvent('run-output', { type: 'system', message: `=== [Disassembly Generation: ${path.basename(filePath)}] ===` });
+      sendRunEvent('run-output', { type: 'system', message: `$ ${activeCompiler} ${compileArgs.join(' ')}` });
+      try {
+        await execFileAsync(activeCompiler, compileArgs, { cwd });
+        const asmContent = await fs.readFile(asmPath, 'utf8');
+        sendRunEvent('run-output', { type: 'system', message: `✓ [Assembly Generated: ${path.basename(asmPath)}]` });
+        sendRunEvent('run-output', { type: 'stdout', message: asmContent.slice(0, 40000) });
+        return { success: true, assemblyPath: asmPath, assembly: asmContent };
+      } catch (err: any) {
+        sendRunEvent('run-output', { type: 'stderr', message: err.stderr || err.message });
+        return { success: false, error: err.message };
+      }
+    }
+
+    // Custom Flags
+    if (config?.customFlags?.trim()) {
+      compileArgs.push(...config.customFlags.trim().split(/\s+/));
+    }
+
+    compileArgs.push(filePath, '-o', outPath);
+
+    sendRunEvent('run-output', { type: 'system', message: `=== [${isC ? 'C' : 'C++'} Build Started: ${path.basename(filePath)}] ===` });
+    sendRunEvent('run-output', { type: 'system', message: `$ ${activeCompiler} ${compileArgs.join(' ')}` });
+    sendRunEvent('run-status', { state: 'running', filePath });
+
+    try {
+      const { stdout, stderr } = await execFileAsync(activeCompiler, compileArgs, { cwd });
+      if (stdout.trim()) {
+        sendRunEvent('run-output', { type: 'stdout', message: stdout });
+      }
+      if (stderr.trim()) {
+        sendRunEvent('run-output', { type: 'stderr', message: stderr });
+      }
+
+      const diags = parseCppDiagnostics(stderr, filePath);
+      sendRunEvent('diagnostics', diags);
+
+      sendRunEvent('run-output', { type: 'system', message: `✓ [${isC ? 'C' : 'C++'} Build Succeeded] -> ${path.basename(outPath)}` });
+
+      if (!runAfter) {
+        sendRunEvent('run-status', { state: 'idle', filePath });
+        return { success: true, diagnostics: diags };
+      }
+
+      // Execute compiled binary
+      sendRunEvent('run-output', { type: 'system', message: `=== [Running: ./${path.basename(outPath)}] ===\n` });
+
+      activeRunProcess = spawn(outPath, [], {
+        cwd,
+        windowsHide: true,
+      });
+
+      activeRunProcess.stdout?.on('data', (chunk: Buffer) => {
+        sendRunEvent('run-output', { type: 'stdout', message: chunk.toString() });
+      });
+
+      activeRunProcess.stderr?.on('data', (chunk: Buffer) => {
+        sendRunEvent('run-output', { type: 'stderr', message: chunk.toString() });
+      });
+
+      activeRunProcess.on('error', (error) => {
+        sendRunEvent('run-output', { type: 'stderr', message: error.message });
+        sendRunEvent('run-status', { state: 'error', filePath, message: error.message });
+        activeRunProcess = null;
+      });
+
+      activeRunProcess.on('exit', (code, signal) => {
+        sendRunEvent('run-output', {
+          type: 'system',
+          message: `\n=== [Process Finished with exit code ${code ?? 0}] ===`,
+        });
+        sendRunEvent('run-status', { state: 'idle', filePath, code, signal });
+        activeRunProcess = null;
+      });
+
+      return { success: true, diagnostics: diags };
+    } catch (error: any) {
+      const errorOutput = `${error.stdout || ''}\n${error.stderr || error.message || ''}`;
+      sendRunEvent('run-output', { type: 'stderr', message: errorOutput });
+      sendRunEvent('run-output', {
+        type: 'system',
+        message: `✗ [${isC ? 'C' : 'C++'} Build Failed]\nTip: Ensure GCC/MinGW (g++) or Clang is installed on your PATH.`,
+      });
+
+      const diags = parseCppDiagnostics(errorOutput, filePath);
+      sendRunEvent('diagnostics', diags);
+      sendRunEvent('run-status', { state: 'error', filePath, message: 'Build failed' });
+      return { success: false, diagnostics: diags, error: errorOutput };
+    }
+  }
+
+  // Rust Compilation
+  if (ext === '.rs') {
+    return compileAndRunRust(filePath, runAfter, config);
+  }
+
+  // Go Compilation
+  if (ext === '.go') {
+    return compileAndRunGo(filePath, runAfter);
+  }
+
+  // Java Compilation
+  if (ext === '.java') {
+    return compileAndRunJava(filePath, runAfter);
+  }
+
+  // Fallback to standard execution (Python, Node, etc.)
+  if (runAfter) {
+    runFile(filePath);
+    return { success: true };
+  } else {
+    sendRunEvent('run-output', { type: 'system', message: `ℹ [Build not required for interpreted language: ${ext}]` });
+    return { success: true };
+  }
+}
+
+async function compileAndRunRust(filePath: string, runAfter = true, config?: any) {
+  assertWorkspacePath(filePath);
+  if (activeRunProcess) stopActiveRun();
+  lastRunFilePath = filePath;
+
+  const cwd = currentWorkspaceRoot ?? path.dirname(filePath);
+  const baseName = path.basename(filePath, '.rs');
+  const outExt = process.platform === 'win32' ? '.exe' : '';
+  const outPath = path.join(path.dirname(filePath), `${baseName}${outExt}`);
+
+  const args: string[] = [];
+  if (config?.optimization === 'O3') args.push('-C', 'opt-level=3');
+  else if (config?.optimization === 'O2') args.push('-C', 'opt-level=2');
+  else if (config?.optimization === 'O1') args.push('-C', 'opt-level=1');
+  else if (config?.optimization === 'O0') args.push('-C', 'opt-level=0');
+
+  if (config?.debugSymbols !== false) args.push('-g');
+  args.push(filePath, '-o', outPath);
+
+  sendRunEvent('run-output', { type: 'system', message: `=== [Rust Build: ${path.basename(filePath)}] ===` });
+  sendRunEvent('run-output', { type: 'system', message: `$ rustc ${args.join(' ')}` });
   sendRunEvent('run-status', { state: 'running', filePath });
 
-  // Check which compiler is available
-  const compilers = await detectCppCompilers();
-  const activeCompiler = compilers.find((c) => c.available)?.command || 'g++';
-
-  const compileArgs = ['-std=c++20', '-O2', filePath, '-o', outPath];
-  sendRunEvent('run-output', { type: 'system', message: `$ ${activeCompiler} ${compileArgs.join(' ')}` });
-
   try {
-    const { stdout, stderr } = await execFileAsync(activeCompiler, compileArgs, { cwd });
-    if (stdout.trim()) {
-      sendRunEvent('run-output', { type: 'stdout', message: stdout });
-    }
-    if (stderr.trim()) {
-      sendRunEvent('run-output', { type: 'stderr', message: stderr });
-    }
+    const { stdout, stderr } = await execFileAsync('rustc', args, { cwd });
+    if (stdout.trim()) sendRunEvent('run-output', { type: 'stdout', message: stdout });
+    if (stderr.trim()) sendRunEvent('run-output', { type: 'stderr', message: stderr });
 
-    // Clear diagnostics or parse any warnings
-    const diags = parseCppDiagnostics(stderr, filePath);
-    sendRunEvent('diagnostics', diags);
-
-    sendRunEvent('run-output', { type: 'system', message: `✓ [C++ Build Succeeded] -> ${path.basename(outPath)}` });
+    sendRunEvent('run-output', { type: 'system', message: `✓ [Rust Build Succeeded] -> ${path.basename(outPath)}` });
 
     if (!runAfter) {
       sendRunEvent('run-status', { state: 'idle', filePath });
-      return { success: true, diagnostics: diags };
+      return { success: true };
     }
 
-    // Execute compiled binary
     sendRunEvent('run-output', { type: 'system', message: `=== [Running: ./${path.basename(outPath)}] ===\n` });
-
-    activeRunProcess = spawn(outPath, [], {
-      cwd,
-      windowsHide: true,
-    });
-
-    activeRunProcess.stdout?.on('data', (chunk: Buffer) => {
-      sendRunEvent('run-output', { type: 'stdout', message: chunk.toString() });
-    });
-
-    activeRunProcess.stderr?.on('data', (chunk: Buffer) => {
-      sendRunEvent('run-output', { type: 'stderr', message: chunk.toString() });
-    });
-
-    activeRunProcess.on('error', (error) => {
-      sendRunEvent('run-output', { type: 'stderr', message: error.message });
-      sendRunEvent('run-status', { state: 'error', filePath, message: error.message });
+    activeRunProcess = spawn(outPath, [], { cwd, windowsHide: true });
+    activeRunProcess.stdout?.on('data', (chunk: Buffer) => sendRunEvent('run-output', { type: 'stdout', message: chunk.toString() }));
+    activeRunProcess.stderr?.on('data', (chunk: Buffer) => sendRunEvent('run-output', { type: 'stderr', message: chunk.toString() }));
+    activeRunProcess.on('error', (err) => {
+      sendRunEvent('run-output', { type: 'stderr', message: err.message });
+      sendRunEvent('run-status', { state: 'error', filePath, message: err.message });
       activeRunProcess = null;
     });
-
     activeRunProcess.on('exit', (code, signal) => {
-      sendRunEvent('run-output', {
-        type: 'system',
-        message: `\n=== [Process Finished with exit code ${code ?? 0}] ===`,
-      });
+      sendRunEvent('run-output', { type: 'system', message: `\n=== [Process Finished with exit code ${code ?? 0}] ===` });
       sendRunEvent('run-status', { state: 'idle', filePath, code, signal });
       activeRunProcess = null;
     });
-
-    return { success: true, diagnostics: diags };
-  } catch (error: any) {
-    const errorOutput = `${error.stdout || ''}\n${error.stderr || error.message || ''}`;
+    return { success: true };
+  } catch (err: any) {
+    const errorOutput = `${err.stdout || ''}\n${err.stderr || err.message || ''}`;
     sendRunEvent('run-output', { type: 'stderr', message: errorOutput });
-    sendRunEvent('run-output', {
-      type: 'system',
-      message: `✗ [C++ Build Failed]\nTip: Ensure GCC/MinGW (g++) or Clang is installed on your PATH.\nInstall on Windows: 'winget install -e --id MSYS2.MSYS2' or download WinLibs from winlibs.com`,
-    });
-
-    const diags = parseCppDiagnostics(errorOutput, filePath);
-    sendRunEvent('diagnostics', diags);
+    sendRunEvent('run-output', { type: 'system', message: `✗ [Rust Build Failed]\nTip: Ensure rustc is installed on your PATH.` });
     sendRunEvent('run-status', { state: 'error', filePath, message: 'Build failed' });
-    return { success: false, diagnostics: diags, output: errorOutput };
+    return { success: false, error: errorOutput };
+  }
+}
+
+async function compileAndRunGo(filePath: string, runAfter = true) {
+  assertWorkspacePath(filePath);
+  if (activeRunProcess) stopActiveRun();
+  lastRunFilePath = filePath;
+
+  const cwd = currentWorkspaceRoot ?? path.dirname(filePath);
+  const baseName = path.basename(filePath, '.go');
+  const outExt = process.platform === 'win32' ? '.exe' : '';
+  const outPath = path.join(path.dirname(filePath), `${baseName}${outExt}`);
+
+  if (!runAfter) {
+    sendRunEvent('run-output', { type: 'system', message: `=== [Go Build: ${path.basename(filePath)}] ===` });
+    sendRunEvent('run-output', { type: 'system', message: `$ go build -o ${outPath} ${filePath}` });
+    sendRunEvent('run-status', { state: 'running', filePath });
+    try {
+      const { stdout, stderr } = await execFileAsync('go', ['build', '-o', outPath, filePath], { cwd });
+      if (stdout.trim()) sendRunEvent('run-output', { type: 'stdout', message: stdout });
+      if (stderr.trim()) sendRunEvent('run-output', { type: 'stderr', message: stderr });
+      sendRunEvent('run-output', { type: 'system', message: `✓ [Go Build Succeeded] -> ${path.basename(outPath)}` });
+      sendRunEvent('run-status', { state: 'idle', filePath });
+      return { success: true };
+    } catch (err: any) {
+      const errorOutput = `${err.stdout || ''}\n${err.stderr || err.message || ''}`;
+      sendRunEvent('run-output', { type: 'stderr', message: errorOutput });
+      sendRunEvent('run-output', { type: 'system', message: `✗ [Go Build Failed]` });
+      sendRunEvent('run-status', { state: 'error', filePath, message: 'Build failed' });
+      return { success: false, error: errorOutput };
+    }
+  }
+
+  // Run with go run
+  runFile(filePath);
+  return { success: true };
+}
+
+async function compileAndRunJava(filePath: string, runAfter = true) {
+  assertWorkspacePath(filePath);
+  if (activeRunProcess) stopActiveRun();
+  lastRunFilePath = filePath;
+
+  const cwd = currentWorkspaceRoot ?? path.dirname(filePath);
+  const fileDir = path.dirname(filePath);
+  const className = path.basename(filePath, '.java');
+
+  sendRunEvent('run-output', { type: 'system', message: `=== [Java Compile: ${path.basename(filePath)}] ===` });
+  sendRunEvent('run-output', { type: 'system', message: `$ javac ${filePath}` });
+  sendRunEvent('run-status', { state: 'running', filePath });
+
+  try {
+    const { stdout, stderr } = await execFileAsync('javac', [filePath], { cwd });
+    if (stdout.trim()) sendRunEvent('run-output', { type: 'stdout', message: stdout });
+    if (stderr.trim()) sendRunEvent('run-output', { type: 'stderr', message: stderr });
+    sendRunEvent('run-output', { type: 'system', message: `✓ [Java Compile Succeeded] -> ${className}.class` });
+
+    if (!runAfter) {
+      sendRunEvent('run-status', { state: 'idle', filePath });
+      return { success: true };
+    }
+
+    sendRunEvent('run-output', { type: 'system', message: `=== [Running Java: java -cp . ${className}] ===\n` });
+    activeRunProcess = spawn('java', ['-cp', fileDir, className], { cwd: fileDir, windowsHide: true });
+    activeRunProcess.stdout?.on('data', (chunk: Buffer) => sendRunEvent('run-output', { type: 'stdout', message: chunk.toString() }));
+    activeRunProcess.stderr?.on('data', (chunk: Buffer) => sendRunEvent('run-output', { type: 'stderr', message: chunk.toString() }));
+    activeRunProcess.on('error', (err) => {
+      sendRunEvent('run-output', { type: 'stderr', message: err.message });
+      sendRunEvent('run-status', { state: 'error', filePath, message: err.message });
+      activeRunProcess = null;
+    });
+    activeRunProcess.on('exit', (code, signal) => {
+      sendRunEvent('run-output', { type: 'system', message: `\n=== [Process Finished with exit code ${code ?? 0}] ===` });
+      sendRunEvent('run-status', { state: 'idle', filePath, code, signal });
+      activeRunProcess = null;
+    });
+    return { success: true };
+  } catch (err: any) {
+    const errorOutput = `${err.stdout || ''}\n${err.stderr || err.message || ''}`;
+    sendRunEvent('run-output', { type: 'stderr', message: errorOutput });
+    sendRunEvent('run-output', { type: 'system', message: `✗ [Java Compile Failed]` });
+    sendRunEvent('run-status', { state: 'error', filePath, message: 'Compile failed' });
+    return { success: false, error: errorOutput };
   }
 }
 
@@ -639,42 +936,6 @@ function resolveRunCommand(filePath: string) {
       return { command: 'cmd.exe', args: ['/c', filePath] };
     default:
       throw new Error(`Running ${extension || 'this file type'} directly is not supported yet`);
-  }
-}
-
-async function compileAndRunRust(filePath: string) {
-  assertWorkspacePath(filePath);
-  if (activeRunProcess) stopActiveRun();
-
-  lastRunFilePath = filePath;
-  const cwd = currentWorkspaceRoot ?? path.dirname(filePath);
-  const baseName = path.basename(filePath, path.extname(filePath));
-  const outExt = process.platform === 'win32' ? '.exe' : '';
-  const outPath = path.join(path.dirname(filePath), `${baseName}${outExt}`);
-
-  sendRunEvent('run-output', { type: 'system', message: `=== [Rust Build: rustc "${filePath}"] ===` });
-  sendRunEvent('run-status', { state: 'running', filePath });
-
-  try {
-    const { stdout, stderr } = await execAsync(`rustc -O "${filePath}" -o "${outPath}"`, { cwd });
-    if (stdout.trim()) sendRunEvent('run-output', { type: 'stdout', message: stdout });
-    if (stderr.trim()) sendRunEvent('run-output', { type: 'stderr', message: stderr });
-
-    sendRunEvent('run-output', { type: 'system', message: `✓ [Rust Build Succeeded] -> ${path.basename(outPath)}\n` });
-
-    activeRunProcess = spawn(outPath, [], { cwd, windowsHide: true });
-    activeRunProcess.stdout?.on('data', (chunk: Buffer) => sendRunEvent('run-output', { type: 'stdout', message: chunk.toString() }));
-    activeRunProcess.stderr?.on('data', (chunk: Buffer) => sendRunEvent('run-output', { type: 'stderr', message: chunk.toString() }));
-    activeRunProcess.on('exit', (code) => {
-      sendRunEvent('run-output', { type: 'system', message: `\n=== [Process Finished with exit code ${code ?? 0}] ===` });
-      sendRunEvent('run-status', { state: 'idle', filePath, code });
-      activeRunProcess = null;
-    });
-    return { success: true };
-  } catch (error: any) {
-    sendRunEvent('run-output', { type: 'stderr', message: error.stderr || error.message });
-    sendRunEvent('run-status', { state: 'error', filePath });
-    return { success: false };
   }
 }
 
@@ -859,8 +1120,20 @@ function setupRunHandlers() {
     return compileAndRunCpp(filePath, runAfter);
   });
 
+  ipcMain.handle('compile-file', async (_, filePath: string, config?: any, runAfter = false) => {
+    return compileAndRunFile(filePath, config, runAfter);
+  });
+
   ipcMain.handle('detect-cpp-compilers', async () => {
     return detectCppCompilers();
+  });
+
+  ipcMain.handle('detect-all-toolchains', async () => {
+    return detectAllToolchains();
+  });
+
+  ipcMain.handle('clean-build-artifacts', async (_, targetDir?: string) => {
+    return cleanBuildArtifacts(targetDir);
   });
 
   ipcMain.handle('stop-run', async () => ({
@@ -1012,6 +1285,31 @@ function setupGitHandlers() {
   ipcMain.handle('git-commit', async (_event, message: string) => {
     if (!currentWorkspaceRoot) return;
     await execFileAsync('git', ['commit', '-m', message], { cwd: currentWorkspaceRoot });
+  });
+  ipcMain.handle('git-diff', async (_event, file: string) => {
+    if (!currentWorkspaceRoot) return { original: '', modified: '' };
+    try {
+      const cleanRelPath = file.replace(/^[/\\]+/, '').replace(/\\/g, '/');
+      let original = '';
+      try {
+        const { stdout } = await execFileAsync('git', ['show', `HEAD:${cleanRelPath}`], { cwd: currentWorkspaceRoot });
+        original = stdout;
+      } catch {
+        original = '';
+      }
+
+      let modified = '';
+      const fullPath = path.isAbsolute(file) ? file : path.join(currentWorkspaceRoot, file);
+      try {
+        modified = await fs.readFile(fullPath, 'utf8');
+      } catch {
+        modified = '';
+      }
+
+      return { original, modified };
+    } catch {
+      return { original: '', modified: '' };
+    }
   });
 }
 
@@ -1243,6 +1541,81 @@ function setupConfigHandlers() {
   });
 }
 
+function getVSCodeSettingsPath(): string | null {
+  const home = os.homedir();
+  let candidate = '';
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+    candidate = path.join(appData, 'Code', 'User', 'settings.json');
+  } else if (process.platform === 'darwin') {
+    candidate = path.join(home, 'Library', 'Application Support', 'Code', 'User', 'settings.json');
+  } else {
+    candidate = path.join(home, '.config', 'Code', 'User', 'settings.json');
+  }
+  return fsSync.existsSync(candidate) ? candidate : null;
+}
+
+function stripJsonComments(jsonString: string): string {
+  return jsonString
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^\\:])\/\/.*$/gm, '$1')
+    .replace(/,\s*([\]}])/g, '$1');
+}
+
+function setupVSCodeHandlers() {
+  ipcMain.handle('read-vscode-settings', async () => {
+    try {
+      const settingsPath = getVSCodeSettingsPath();
+      if (!settingsPath) {
+        return {
+          success: false,
+          error: 'VS Code settings.json was not found on this machine. Is VS Code installed?',
+        };
+      }
+
+      const rawText = await fs.readFile(settingsPath, 'utf8');
+      const cleanJson = stripJsonComments(rawText);
+      const parsed = JSON.parse(cleanJson);
+
+      const mapped: Record<string, any> = {};
+
+      if (typeof parsed['editor.fontSize'] === 'number') {
+        mapped.fontSize = parsed['editor.fontSize'];
+      }
+      if (typeof parsed['editor.fontFamily'] === 'string') {
+        mapped.fontFamily = parsed['editor.fontFamily'];
+      }
+      if (typeof parsed['editor.tabSize'] === 'number') {
+        mapped.tabSize = parsed['editor.tabSize'];
+      }
+      if (parsed['editor.wordWrap'] !== undefined) {
+        mapped.wordWrap = parsed['editor.wordWrap'] === 'on' || parsed['editor.wordWrap'] === true;
+      }
+      if (parsed['editor.lineNumbers'] !== undefined) {
+        mapped.lineNumbers = parsed['editor.lineNumbers'] !== 'off' && parsed['editor.lineNumbers'] !== false;
+      }
+      if (parsed['files.autoSave'] !== undefined) {
+        mapped.autoSave = parsed['files.autoSave'] !== 'off' && parsed['files.autoSave'] !== false;
+      }
+      if (typeof parsed['workbench.colorTheme'] === 'string') {
+        mapped.theme = parsed['workbench.colorTheme'];
+      }
+
+      return {
+        success: true,
+        path: settingsPath,
+        raw: parsed,
+        mapped,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        error: err instanceof Error ? err.message : 'Failed to read VS Code settings',
+      };
+    }
+  });
+}
+
 function initializeHandlers() {
   if (handlersInitialized) {
     return;
@@ -1255,6 +1628,7 @@ function initializeHandlers() {
   setupGitHandlers();
   setupIdentityHandlers();
   setupConfigHandlers();
+  setupVSCodeHandlers();
   setupPluginHandlers({
     userDataPath: app.getPath('userData'),
     getWorkspaceRoot: () => currentWorkspaceRoot,

@@ -8,9 +8,15 @@ import Sidebar from './components/Sidebar';
 import StatusBar from './components/StatusBar';
 import TitleBar from './components/TitleBar';
 import WorkspaceTrustDialog, { WorkspaceTrustDecision } from './components/WorkspaceTrustDialog';
+import CompilerConfigModal, { DEFAULT_COMPILER_CONFIG } from './components/CompilerConfigModal';
 import { AppSettings, settingsService } from './services/settingsService';
 import { CPP_TEMPLATES } from './services/cppService';
-import { DiagnosticItem, FileNode, OpenFile, RunOutputEvent, RunStatusEvent } from './types';
+import { CompilerConfig, DiagnosticItem, FileNode, OpenFile, RunOutputEvent, RunStatusEvent } from './types';
+import { appWindow } from './platform/window';
+import { fs } from './platform/fs';
+import { runtime } from './platform/runtime';
+import { git } from './platform/git';
+import { plugins } from './platform/plugins';
 
 const DEFAULT_ABOUT = 'Onyx Code v1.0.0\nAuthentic VS Code Desktop IDE with Modern C++ & AI Engine';
 
@@ -72,11 +78,21 @@ export default function App() {
   const [outputLines, setOutputLines] = useState<RunOutputEvent[]>([]);
   const [runStatus, setRunStatus] = useState<RunStatusEvent['state']>('idle');
   const [diagnostics, setDiagnostics] = useState<DiagnosticItem[]>([]);
+  const [targetNavigation, setTargetNavigation] = useState<{ filePath: string; line: number; column: number; timestamp: number } | null>(null);
   const [gitBranch, setGitBranch] = useState<string | null>(null);
   const [isWorkspaceTrusted, setIsWorkspaceTrusted] = useState(false);
   const [trustRequest, setTrustRequest] = useState<{ path: string; kind: 'file' | 'folder' } | null>(null);
   const trustResolver = useRef<((decision: WorkspaceTrustDecision) => void) | null>(null);
   const [pluginNotice, setPluginNotice] = useState<string | null>(null);
+  const [compilerConfigOpen, setCompilerConfigOpen] = useState(false);
+  const [compilerConfig, setCompilerConfig] = useState<CompilerConfig>(() => {
+    try {
+      const saved = localStorage.getItem('onyx_compiler_config');
+      return saved ? JSON.parse(saved) : DEFAULT_COMPILER_CONFIG;
+    } catch {
+      return DEFAULT_COMPILER_CONFIG;
+    }
+  });
 
   const activeFile = openFiles[activeFileIndex];
 
@@ -113,7 +129,7 @@ export default function App() {
 
   const refreshGitBranch = useCallback(async () => {
     try {
-      const branch = await window.git?.branch?.();
+      const branch = await git.branch();
       setGitBranch(branch || null);
     } catch {
       setGitBranch(null);
@@ -124,16 +140,16 @@ export default function App() {
   useEffect(() => {
     refreshGitBranch();
 
-    const unsubscribeOutput = window.runtime?.onRunOutput((payload) => {
+    const unsubscribeOutput = runtime.onRunOutput((payload) => {
       setOutputVisible(true);
       setOutputLines((current) => [...current, payload]);
     });
 
-    const unsubscribeStatus = window.runtime?.onRunStatus((payload) => {
+    const unsubscribeStatus = runtime.onRunStatus((payload) => {
       setRunStatus(payload.state);
     });
 
-    const unsubscribeDiags = window.runtime?.onDiagnostics?.((diags) => {
+    const unsubscribeDiags = runtime.onDiagnostics((diags) => {
       setDiagnostics(diags);
       if (diags.length > 0) {
         setOutputVisible(true);
@@ -142,9 +158,9 @@ export default function App() {
     });
 
     return () => {
-      unsubscribeOutput?.();
-      unsubscribeStatus?.();
-      unsubscribeDiags?.();
+      unsubscribeOutput();
+      unsubscribeStatus();
+      unsubscribeDiags();
     };
   }, [refreshGitBranch]);
 
@@ -156,6 +172,7 @@ export default function App() {
         : settings.theme;
       document.documentElement.dataset.colorTheme = resolvedTheme;
       document.documentElement.classList.toggle('light', resolvedTheme === 'light');
+      settingsService.applyTheme(resolvedTheme);
     };
     applyTheme();
     media.addEventListener?.('change', applyTheme);
@@ -163,11 +180,11 @@ export default function App() {
   }, [settings.theme]);
 
   useEffect(() => {
-    window.plugins?.setWorkspaceTrusted(isWorkspaceTrusted).catch(() => undefined);
+    plugins.setWorkspaceTrusted(isWorkspaceTrusted).catch(() => undefined);
   }, [isWorkspaceTrusted, rootPath]);
 
   useEffect(() => {
-    return window.plugins?.onMessage?.(({ pluginId, message }) => {
+    return plugins.onMessage(({ pluginId, message }) => {
       setPluginNotice(`${pluginId}: ${message}`);
       setTimeout(() => setPluginNotice(null), 4000);
     });
@@ -178,7 +195,7 @@ export default function App() {
   useEffect(() => {
     const restoreLastWorkspace = async () => {
       try {
-        const recents = await window.fileSystem?.getRecentWorkspaces?.();
+        const recents = await fs.getRecentWorkspaces();
         const lastWorkspace = recents?.[0];
         if (lastWorkspace?.path) {
           await handleOpenFolder(lastWorkspace.path, { silent: true });
@@ -193,12 +210,12 @@ export default function App() {
 
   const refreshFileTree = useCallback(
     async (targetPath: string | null = rootPath) => {
-      if (!targetPath || !window.fileSystem) {
+      if (!targetPath || !fs.isAvailable()) {
         return;
       }
 
       try {
-        const files = await window.fileSystem.readDirectory(targetPath);
+        const files = (await fs.readDirectory(targetPath)) as FileNode[];
         setFileTree(files);
       } catch (error) {
         console.error('Error refreshing file tree:', error);
@@ -241,7 +258,7 @@ export default function App() {
   const handleOpenFolder = async (folderPath?: string, options?: { silent?: boolean }): Promise<boolean> => {
     let selectedPath = typeof folderPath === 'string' ? folderPath : undefined;
     if (!selectedPath) {
-      selectedPath = (await window.fileSystem?.openFolderDialog()) || undefined;
+      selectedPath = (await fs.openFolderDialog()) || undefined;
     }
     if (!selectedPath) {
       return false;
@@ -255,8 +272,8 @@ export default function App() {
     }
 
     try {
-      const normalizedPath = await window.fileSystem?.setWorkspaceRoot?.(selectedPath);
-      const files = await window.fileSystem?.readDirectory(selectedPath);
+      const normalizedPath = await fs.setWorkspaceRoot(selectedPath);
+      const files = await fs.readDirectory(selectedPath);
       setRootPath(normalizedPath || selectedPath);
       setFileTree(files ?? []);
       setIsWorkspaceTrusted(trusted);
@@ -281,16 +298,16 @@ export default function App() {
       return false;
     }
 
-    await window.fileSystem?.addRecentWorkspace?.(selectedPath);
+    await fs.addRecentWorkspace(selectedPath);
     await refreshGitBranch();
     return true;
   };
 
   const handleOpenFile = async () => {
     try {
-      const picked = window.fileSystem?.pickFileDialog
-        ? await window.fileSystem.pickFileDialog()
-        : await window.fileSystem?.openFileDialog();
+      const picked = fs.hasPickFileDialog()
+        ? await fs.pickFileDialog()
+        : await fs.openFileDialog();
       if (!picked) return;
 
       const insideCurrentWorkspace = rootPath && normalizePath(picked.path).startsWith(`${normalizePath(rootPath)}/`);
@@ -298,15 +315,15 @@ export default function App() {
       if (!insideCurrentWorkspace && !trusted) {
         const trustDecision = await requestTrustDecision(picked.path, 'file');
         if (trustDecision === 'cancel') {
-          await window.fileSystem?.discardPickedFile?.(picked.path);
+          await fs.discardPickedFile(picked.path);
           return;
         }
         trusted = trustDecision === 'trusted';
       }
-      if (window.fileSystem?.authorizePickedFile) {
-        await window.fileSystem.authorizePickedFile(picked.path);
+      if (fs.hasAuthorizePickedFile()) {
+        await fs.authorizePickedFile(picked.path);
       }
-      const content = 'content' in picked ? picked.content : await window.fileSystem?.readFile(picked.path);
+      const content = 'content' in picked ? picked.content : await fs.readFile(picked.path);
       if (typeof content !== 'string') throw new Error('Unable to read the selected file');
       upsertOpenFile(picked.path, content, false, false, trusted);
     } catch (error) {
@@ -315,7 +332,7 @@ export default function App() {
   };
 
   const handleCreateFile = async (requestedPath?: string): Promise<boolean> => {
-    if (!rootPath || !window.fileSystem) {
+    if (!rootPath || !fs.isAvailable()) {
       const untitledNumber = openFiles.filter((file) => file.isUntitled).length + 1;
       const defaultName = `Untitled-${untitledNumber}`;
       upsertOpenFile(`untitled://${defaultName}`, '', true, true, isWorkspaceTrusted);
@@ -331,7 +348,7 @@ export default function App() {
 
     try {
       const fullPath = `${rootPath}/${fileName.replace(/^[/\\]+/, '')}`;
-      await window.fileSystem.createFile(fullPath);
+      await fs.createFile(fullPath);
       await refreshFileTree(rootPath);
       upsertOpenFile(fullPath, '', false, false, isWorkspaceTrusted);
       return true;
@@ -342,7 +359,7 @@ export default function App() {
   };
 
   const handleCreateFolder = async (requestedPath?: string): Promise<boolean> => {
-    if (!rootPath || !window.fileSystem) {
+    if (!rootPath || !fs.isAvailable()) {
       alert('Open a project folder first.');
       return false;
     }
@@ -355,7 +372,7 @@ export default function App() {
     }
 
     try {
-      await window.fileSystem.createFolder(`${rootPath}/${folderName.replace(/^[/\\]+/, '')}`);
+      await fs.createFolder(`${rootPath}/${folderName.replace(/^[/\\]+/, '')}`);
       await refreshFileTree(rootPath);
       return true;
     } catch (error) {
@@ -374,7 +391,7 @@ export default function App() {
       return;
     }
 
-    const content = await window.fileSystem?.readFile(filePath);
+    const content = await fs.readFile(filePath);
     if (typeof content === 'string') {
       upsertOpenFile(filePath, content, false, false, isWorkspaceTrusted);
     }
@@ -412,12 +429,12 @@ export default function App() {
   };
 
   const handleFileSave = useCallback(async () => {
-    if (!activeFile || !window.fileSystem) {
+    if (!activeFile || !fs.isAvailable()) {
       return;
     }
 
     if (activeFile.isUntitled) {
-      const result = await window.fileSystem.saveFileDialog({
+      const result = await fs.saveFileDialog({
         defaultPath: rootPath ? `${rootPath}/${activeFile.name}` : activeFile.name,
         content: activeFile.content,
       });
@@ -440,7 +457,7 @@ export default function App() {
       return;
     }
 
-    await window.fileSystem.writeFile(activeFile.path, activeFile.content);
+    await fs.writeFile(activeFile.path, activeFile.content);
     setOpenFiles((current) =>
       current.map((file, index) =>
         index === activeFileIndex ? { ...file, isDirty: false } : file
@@ -450,7 +467,7 @@ export default function App() {
   }, [activeFile, activeFileIndex, refreshFileTree, rootPath]);
 
   const handleSaveAll = useCallback(async () => {
-    if (!window.fileSystem) {
+    if (!fs.isAvailable()) {
       return;
     }
 
@@ -462,13 +479,13 @@ export default function App() {
     const savedPaths = new Map<string, { path: string; name: string }>();
     for (const file of dirtyFiles) {
       if (file.isUntitled) {
-        const result = await window.fileSystem.saveFileDialog({
+        const result = await fs.saveFileDialog({
           defaultPath: rootPath ? `${rootPath}/${file.name}` : file.name,
           content: file.content,
         });
         if (result) savedPaths.set(file.path, result);
       } else {
-        await window.fileSystem.writeFile(file.path, file.content);
+        await fs.writeFile(file.path, file.content);
         savedPaths.set(file.path, { path: file.path, name: file.name });
       }
     }
@@ -490,11 +507,11 @@ export default function App() {
   }, [openFiles, refreshFileTree, rootPath]);
 
   const handleSaveAs = async () => {
-    if (!activeFile || !window.fileSystem) {
+    if (!activeFile || !fs.isAvailable()) {
       return;
     }
 
-    const result = await window.fileSystem.saveFileDialog({
+    const result = await fs.saveFileDialog({
       defaultPath: activeFile.path,
       content: activeFile.content,
     });
@@ -528,7 +545,12 @@ export default function App() {
     setActiveBottomTab('output');
 
     try {
-      await window.runtime?.runCurrentFile(activeFile.path);
+      const ext = activeFile.name.split('.').pop()?.toLowerCase();
+      if (['cpp', 'cc', 'cxx', 'c', 'rs', 'go', 'java'].includes(ext || '')) {
+        await runtime.compileFile(activeFile.path, compilerConfig, true);
+      } else {
+        await runtime.runCurrentFile(activeFile.path);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to run file';
       setRunStatus('error');
@@ -538,7 +560,7 @@ export default function App() {
 
   const handleBuildCpp = async () => {
     if (!activeFile) {
-      alert('Open a C++ file to build.');
+      alert('Open a file to build.');
       return;
     }
 
@@ -552,23 +574,23 @@ export default function App() {
     setActiveBottomTab('output');
 
     try {
-      await window.runtime?.compileCppFile?.(activeFile.path, false);
+      await runtime.compileFile(activeFile.path, compilerConfig, false);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to build C++ file';
+      const message = error instanceof Error ? error.message : 'Failed to build file';
       setRunStatus('error');
       setOutputLines([{ type: 'stderr', message }]);
     }
   };
 
   const handleStopExecution = async () => {
-    await window.runtime?.stopRun();
+    await runtime.stopRun();
   };
 
   const handleRestartExecution = async () => {
     setOutputVisible(true);
     setOutputLines([]);
     try {
-      await window.runtime?.restartRun();
+      await runtime.restartRun();
     } catch (error) {
       setOutputLines([
         {
@@ -660,12 +682,12 @@ export default function App() {
   };
 
   const handleApplyCode = async (filePath: string, content: string) => {
-    if (!rootPath || !window.fileSystem) {
+    if (!rootPath || !fs.isAvailable()) {
       upsertOpenFile(filePath, content, false, false, isWorkspaceTrusted);
       return;
     }
 
-    await window.fileSystem.writeFile(filePath, content);
+    await fs.writeFile(filePath, content);
     upsertOpenFile(filePath, content, false, false, isWorkspaceTrusted);
     await refreshFileTree();
   };
@@ -700,9 +722,9 @@ export default function App() {
 
   const handleStartCppProject = async (templateId = 'cpp-hello') => {
     const tmpl = CPP_TEMPLATES.find((t) => t.id === templateId) || CPP_TEMPLATES[0];
-    if (rootPath && window.fileSystem) {
+    if (rootPath && fs.isAvailable()) {
       const targetPath = `${rootPath}/${tmpl.fileName}`;
-      await window.fileSystem.writeFile(targetPath, tmpl.code);
+      await fs.writeFile(targetPath, tmpl.code);
       await refreshFileTree(rootPath);
       upsertOpenFile(targetPath, tmpl.code, false, false, isWorkspaceTrusted);
       return;
@@ -712,9 +734,9 @@ export default function App() {
 
   const handleStartPythonProject = async () => {
     const code = `def main():\n    print("Hello from Python 3.12!")\n    name = input("What is your name? ")\n    print(f"Welcome {name} to Onyx Code IDE.")\n\nif __name__ == "__main__":\n    main()\n`;
-    if (rootPath && window.fileSystem) {
+    if (rootPath && fs.isAvailable()) {
       const targetPath = `${rootPath}/main.py`;
-      await window.fileSystem.writeFile(targetPath, code);
+      await fs.writeFile(targetPath, code);
       await refreshFileTree(rootPath);
       upsertOpenFile(targetPath, code, false, false, isWorkspaceTrusted);
       return;
@@ -724,13 +746,45 @@ export default function App() {
 
   const handleSelectProblem = (diag: DiagnosticItem) => {
     handleFileOpen(diag.filePath);
+    setTargetNavigation({
+      filePath: diag.filePath,
+      line: diag.line,
+      column: diag.column,
+      timestamp: Date.now(),
+    });
     setTimeout(() => {
       dispatchEditorEvent('go-to-line', { line: diag.line });
     }, 100);
   };
 
+  const handleOpenGitDiff = async (filePath: string) => {
+    const result = await git.diff(filePath);
+    if (!result) return;
+    const fileName = filePath.split(/[/\\]/).pop() || filePath;
+    const diffPath = `git-diff://${filePath}`;
+    const existingIndex = openFiles.findIndex((f) => f.path === diffPath);
+    if (existingIndex >= 0) {
+      setActiveFileIndex(existingIndex);
+      setIsWelcomeOpen(false);
+      return;
+    }
+    const ext = fileName.split('.').pop() || '';
+    const newDiffFile: OpenFile = {
+      path: diffPath,
+      name: `${fileName} (Working Tree)`,
+      content: result.modified,
+      originalContent: result.original,
+      language: getLanguageFromExtension(ext),
+      isDirty: false,
+      isDiff: true,
+    };
+    setOpenFiles((prev) => [...prev, newDiffFile]);
+    setActiveFileIndex(openFiles.length);
+    setIsWelcomeOpen(false);
+  };
+
   useEffect(() => {
-    return window.electronAPI?.onMenuCommand?.((command) => {
+    return appWindow.onMenuCommand((command) => {
       switch (command) {
         case 'new-file': void handleCreateFile(); break;
         case 'open-file': void handleOpenFile(); break;
@@ -765,7 +819,7 @@ export default function App() {
         case 'restart': void handleRestartExecution(); break;
         case 'split-terminal': handleSplitTerminal(); break;
         case 'documentation':
-          void window.electronAPI?.openExternalLink('https://code.visualstudio.com/docs');
+          void appWindow.openExternalLink('https://code.visualstudio.com/docs');
           break;
         case 'keyboard-shortcuts': setCommandPaletteOpen(true); break;
         case 'report-issue': setSettingsOpen(true); break;
@@ -867,8 +921,12 @@ export default function App() {
     }
   };
 
-  const currentWorkspaceName = rootPath ? rootPath.split(/[\\/]/).pop() : 'virgoai';
-  const windowTitle = `${activeFile?.name || 'Welcome'} — ${currentWorkspaceName}`;
+  const currentWorkspaceName = rootPath ? (rootPath.split(/[\\/]/).pop() || null) : null;
+  const windowTitle = activeFile
+    ? `${activeFile.name}${currentWorkspaceName ? ` — ${currentWorkspaceName}` : ''} — Onyx Code`
+    : currentWorkspaceName
+    ? `${currentWorkspaceName} — Onyx Code`
+    : 'Onyx Code';
 
   useEffect(() => {
     document.title = windowTitle;
@@ -903,6 +961,7 @@ export default function App() {
         onSearchInProject={handleSearchInProject}
         onRunCode={handleRunCode}
         onBuildCpp={handleBuildCpp}
+        onOpenCompilerConfig={() => setCompilerConfigOpen(true)}
         onStopExecution={handleStopExecution}
         onRestartExecution={handleRestartExecution}
         onViewOutput={() => {
@@ -916,7 +975,7 @@ export default function App() {
         onViewTerminal={handleNewTerminal}
         onSplitTerminal={handleSplitTerminal}
         onOpenDocumentation={() =>
-          window.electronAPI?.openExternalLink('https://code.visualstudio.com/docs')
+          appWindow.openExternalLink('https://code.visualstudio.com/docs')
         }
         onOpenKeyboardShortcuts={() => setCommandPaletteOpen(true)}
         onReportIssue={() => setSettingsOpen(true)}
@@ -978,8 +1037,11 @@ export default function App() {
             onSearchQueryChange={setSearchQuery}
             onRunCode={handleRunCode}
             onStopCode={handleStopExecution}
+            onBuildCpp={handleBuildCpp}
+            onOpenCompilerConfig={() => setCompilerConfigOpen(true)}
             runState={runStatus}
             activeFile={activeFile}
+            onOpenGitDiff={handleOpenGitDiff}
           />
         )}
 
@@ -1011,6 +1073,7 @@ export default function App() {
           diagnostics={diagnostics}
           onSelectProblem={handleSelectProblem}
           onClearDiagnostics={() => setDiagnostics([])}
+          targetNavigation={targetNavigation}
           isWelcomeOpen={isWelcomeOpen}
           onCloseWelcome={() => setIsWelcomeOpen(false)}
           onSelectWelcome={() => setIsWelcomeOpen(true)}
@@ -1022,6 +1085,8 @@ export default function App() {
           onStartPythonProject={handleStartPythonProject}
           onOpenAIWorkspace={() => setShowAIPanel(true)}
           onBuildCpp={handleBuildCpp}
+          onRunCode={handleRunCode}
+          onOpenCompilerConfig={() => setCompilerConfigOpen(true)}
           activeBottomTab={activeBottomTab}
           onSelectBottomTab={setActiveBottomTab}
           isWorkspaceTrusted={isWorkspaceTrusted}
@@ -1042,7 +1107,7 @@ export default function App() {
         onRefreshGit={refreshGitBranch}
         onOpenPreview={() => {
           if (activeFile && !activeFile.isUntitled) {
-            window.electronAPI?.openLocalFile(activeFile.path).catch((error) => {
+            appWindow.openLocalFile(activeFile.path).catch((error) => {
               alert(error instanceof Error ? error.message : 'Unable to open preview');
             });
           }
@@ -1062,6 +1127,13 @@ export default function App() {
       <OllamaConnectionModal
         isOpen={ollamaModalOpen}
         onClose={() => setOllamaModalOpen(false)}
+      />
+
+      <CompilerConfigModal
+        isOpen={compilerConfigOpen}
+        onClose={() => setCompilerConfigOpen(false)}
+        config={compilerConfig}
+        onConfigChange={setCompilerConfig}
       />
 
       <CommandPalette

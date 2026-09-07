@@ -38,6 +38,8 @@ interface EditorLayoutProps {
   diagnostics?: DiagnosticItem[];
   onSelectProblem?: (diagnostic: DiagnosticItem) => void;
   onClearDiagnostics?: () => void;
+  targetNavigation?: { filePath: string; line: number; column: number; timestamp: number } | null;
+  selectedAiModel?: string;
   isWelcomeOpen: boolean;
   onCloseWelcome: () => void;
   onSelectWelcome: () => void;
@@ -49,6 +51,8 @@ interface EditorLayoutProps {
   onStartPythonProject: () => void;
   onOpenAIWorkspace: () => void;
   onBuildCpp?: () => void;
+  onRunCode?: () => void;
+  onOpenCompilerConfig?: () => void;
   activeBottomTab?: 'problems' | 'output' | 'debug' | 'terminal';
   onSelectBottomTab?: (tab: 'problems' | 'output' | 'debug' | 'terminal') => void;
   isWorkspaceTrusted: boolean;
@@ -80,6 +84,8 @@ export default function EditorLayout({
   diagnostics = [],
   onSelectProblem,
   onClearDiagnostics,
+  targetNavigation,
+  selectedAiModel,
   isWelcomeOpen,
   onCloseWelcome,
   onSelectWelcome,
@@ -91,6 +97,8 @@ export default function EditorLayout({
   onStartPythonProject,
   onOpenAIWorkspace,
   onBuildCpp,
+  onRunCode,
+  onOpenCompilerConfig,
   activeBottomTab: externalBottomTab,
   onSelectBottomTab,
   isWorkspaceTrusted,
@@ -151,8 +159,13 @@ export default function EditorLayout({
               onStartPythonProject={onStartPythonProject}
               onOpenAIWorkspace={onOpenAIWorkspace}
               onBuildCpp={onBuildCpp}
+              onRunCode={onRunCode}
+              onOpenCompilerConfig={onOpenCompilerConfig}
               onToggleSplit={() => setIsSplit(!isSplit)}
               isSplit={isSplit}
+              diagnostics={diagnostics}
+              targetNavigation={targetNavigation}
+              selectedAiModel={selectedAiModel}
             />
           </div>
 
@@ -177,8 +190,13 @@ export default function EditorLayout({
                 onStartPythonProject={onStartPythonProject}
                 onOpenAIWorkspace={onOpenAIWorkspace}
                 onBuildCpp={onBuildCpp}
+                onRunCode={onRunCode}
+                onOpenCompilerConfig={onOpenCompilerConfig}
                 onToggleSplit={() => setIsSplit(false)}
                 isSplit={isSplit}
+                diagnostics={diagnostics}
+                targetNavigation={targetNavigation}
+                selectedAiModel={selectedAiModel}
               />
             </div>
           )}
@@ -193,26 +211,26 @@ export default function EditorLayout({
             />
 
             <div
-              className="border-t border-[#27272a] bg-[#18181b] flex flex-col"
+              className="border-t border-[var(--border-color,#27272a)] bg-[var(--panel-bg,#18181b)] flex flex-col"
               style={{ height: bottomPanelHeight }}
             >
-              {/* Bottom Dock Header Tabs */}
-              <div className="flex h-9 items-center justify-between px-3 text-xs text-[#cccccc] border-b border-[#27272a] bg-[#18181b] select-none">
+              {/* Bottom Dock Header Tabs - strict 35px */}
+              <div className="flex h-[35px] items-center justify-between px-3 text-xs text-[#cccccc] border-b border-[var(--border-color,#27272a)] bg-[var(--panel-bg,#18181b)] select-none">
                 <div className="flex items-center h-full">
                   {/* PROBLEMS Tab */}
                   <button
                     onClick={() => setActiveBottomTab('problems')}
-                    className={`h-full px-3 flex items-center gap-1.5 border-b-2 text-xs font-medium transition-colors ${
+                    className={`h-full px-3 flex items-center gap-1.5 border-b-2 text-[11px] font-semibold tracking-wide transition-colors ${
                       activeBottomTab === 'problems'
-                        ? 'border-[#007acc] text-white'
-                        : 'border-transparent text-[#8b91aa] hover:text-[#cccccc]'
+                        ? 'border-[var(--accent-blue,#007acc)] text-white'
+                        : 'border-transparent text-[#858585] hover:text-[#cccccc]'
                     }`}
                   >
                     <span>PROBLEMS</span>
                     {diagnostics.length > 0 && (
                       <span
                         className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                          errorCount > 0 ? 'bg-red-500/20 text-red-400' : 'bg-[#2a2a32] text-[#8b91aa]'
+                          errorCount > 0 ? 'bg-red-500/20 text-red-400' : 'bg-[#2a2a32] text-[#858585]'
                         }`}
                       >
                         {diagnostics.length}
@@ -223,10 +241,10 @@ export default function EditorLayout({
                   {/* OUTPUT Tab */}
                   <button
                     onClick={() => setActiveBottomTab('output')}
-                    className={`h-full px-3 flex items-center gap-1.5 border-b-2 text-xs font-medium transition-colors ${
+                    className={`h-full px-3 flex items-center gap-1.5 border-b-2 text-[11px] font-semibold tracking-wide transition-colors ${
                       activeBottomTab === 'output'
-                        ? 'border-[#007acc] text-white'
-                        : 'border-transparent text-[#8b91aa] hover:text-[#cccccc]'
+                        ? 'border-[var(--accent-blue,#007acc)] text-white'
+                        : 'border-transparent text-[#858585] hover:text-[#cccccc]'
                     }`}
                   >
                     <span>OUTPUT</span>
@@ -242,10 +260,10 @@ export default function EditorLayout({
                   {/* DEBUG CONSOLE Tab */}
                   <button
                     onClick={() => setActiveBottomTab('debug')}
-                    className={`h-full px-3 flex items-center gap-1.5 border-b-2 text-xs font-medium transition-colors ${
+                    className={`h-full px-3 flex items-center gap-1.5 border-b-2 text-[11px] font-semibold tracking-wide transition-colors ${
                       activeBottomTab === 'debug'
-                        ? 'border-[#007acc] text-white'
-                        : 'border-transparent text-[#8b91aa] hover:text-[#cccccc]'
+                        ? 'border-[var(--accent-blue,#007acc)] text-white'
+                        : 'border-transparent text-[#858585] hover:text-[#cccccc]'
                     }`}
                   >
                     <span>DEBUG CONSOLE</span>
@@ -254,10 +272,10 @@ export default function EditorLayout({
                   {/* TERMINAL Tab */}
                   <button
                     onClick={() => setActiveBottomTab('terminal')}
-                    className={`h-full px-3 flex items-center gap-1.5 border-b-2 text-xs font-medium transition-colors ${
+                    className={`h-full px-3 flex items-center gap-1.5 border-b-2 text-[11px] font-semibold tracking-wide transition-colors ${
                       activeBottomTab === 'terminal'
-                        ? 'border-[#007acc] text-white'
-                        : 'border-transparent text-[#8b91aa] hover:text-[#cccccc]'
+                        ? 'border-[var(--accent-blue,#007acc)] text-white'
+                        : 'border-transparent text-[#858585] hover:text-[#cccccc]'
                     }`}
                   >
                     <TerminalSquare size={13} />
@@ -266,18 +284,18 @@ export default function EditorLayout({
                 </div>
 
                 {/* Right Panel Actions */}
-                <div className="flex items-center gap-2 text-[#858585]">
+                <div className="flex items-center gap-1 text-[#858585]">
                   {activeBottomTab === 'output' && (
-                    <button onClick={onClearOutput} className="p-1 hover:text-white rounded hover:bg-[#27272a]" title="Clear Output">
+                    <button onClick={onClearOutput} className="flex h-6 w-6 items-center justify-center hover:text-white rounded-sm hover:bg-[#27272a]" title="Clear Output">
                       <Trash2 size={13} />
                     </button>
                   )}
                   {activeBottomTab === 'problems' && diagnostics.length > 0 && onClearDiagnostics && (
-                    <button onClick={onClearDiagnostics} className="p-1 hover:text-white rounded hover:bg-[#27272a]" title="Clear Problems">
+                    <button onClick={onClearDiagnostics} className="flex h-6 w-6 items-center justify-center hover:text-white rounded-sm hover:bg-[#27272a]" title="Clear Problems">
                       <Trash2 size={13} />
                     </button>
                   )}
-                  <button onClick={onToggleOutput} className="p-1 hover:text-white rounded hover:bg-[#27272a]" title={outputVisible ? 'Hide Panel' : 'Show Panel'}>
+                  <button onClick={onToggleOutput} className="flex h-6 w-6 items-center justify-center hover:text-white rounded-sm hover:bg-[#27272a]" title={outputVisible ? 'Hide Panel' : 'Show Panel'}>
                     <X size={14} />
                   </button>
                 </div>

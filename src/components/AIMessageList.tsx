@@ -26,8 +26,12 @@ import {
   Play,
   Terminal,
   Trash2,
+  Zap,
 } from 'lucide-react';
 import { ChatMessage, OpenFile } from '../types';
+import { appWindow } from '../platform/window';
+import { fs } from '../platform/fs';
+import { runtime } from '../platform/runtime';
 
 const LANGUAGE_ALIASES: Record<string, string> = {
   js: 'javascript',
@@ -156,6 +160,19 @@ interface AIMessageListProps {
   onApply: (path: string, content: string) => Promise<void> | void;
   onCopy: (text: string, id: string) => void;
   onCommandResult: (command: string, stdout: string, stderr: string) => void;
+  onExecutePlan?: (planContent: string) => void;
+}
+
+function looksLikePlan(content: string): boolean {
+  const lower = content.toLowerCase();
+  return (
+    lower.includes('implementation plan') ||
+    lower.includes('plan mode active') ||
+    lower.includes('### plan') ||
+    lower.includes('## plan') ||
+    (lower.includes('goal') && lower.includes('step 1')) ||
+    (lower.includes('step 1') && lower.includes('step 2'))
+  );
 }
 
 function normalizeGeneratedPath(targetPath: string, activeFile?: OpenFile, rootPath?: string | null) {
@@ -183,7 +200,7 @@ const MARKDOWN_COMPONENTS = {
       href={href}
       onClick={(e) => {
         e.preventDefault();
-        if (href) window.electronAPI?.openExternalLink(href);
+        if (href) appWindow.openExternalLink(href);
       }}
       className="text-[#38bdf8] underline underline-offset-2 hover:text-[#7dd3fc] cursor-pointer"
     >
@@ -226,6 +243,7 @@ export default function AIMessageList({
   onApply,
   onCopy,
   onCommandResult,
+  onExecutePlan,
 }: AIMessageListProps) {
   const formatMessage = (content: string, messageId: string) => {
     const thoughtRegex = /<thought>([\s\S]*?)(?:<\/thought>|(?=```)|$)/;
@@ -275,7 +293,7 @@ export default function AIMessageList({
             <button
               onClick={async () => {
                 if (confirm(`Are you sure you want to delete ${deleteName}?`)) {
-                  await window.fileSystem?.deleteFile(fence.deletePath!);
+                  await fs.deleteFile(fence.deletePath!);
                   alert(`Deleted ${fence.deletePath}`);
                 }
               }}
@@ -330,7 +348,7 @@ export default function AIMessageList({
                 <button
                   onClick={async () => {
                     try {
-                      const result = await window.runtime?.runTerminalCommand(commandToRun);
+                      const result = await runtime.runTerminalCommand(commandToRun);
                       if (result) {
                         onCommandResult(commandToRun, result.stdout, result.stderr);
                       }
@@ -480,6 +498,25 @@ export default function AIMessageList({
                 }`}
               >
                 {formatMessage(message.content, message.id)}
+
+                {onExecutePlan && !isUser && looksLikePlan(message.content) && (
+                  <div className="mt-3 flex items-center justify-between rounded-lg border border-sky-500/30 bg-sky-500/10 p-3">
+                    <div className="flex items-center gap-2">
+                      <Zap size={15} className="text-sky-400 shrink-0" />
+                      <div>
+                        <p className="text-xs font-medium text-sky-200">Implementation Plan Ready</p>
+                        <p className="text-[11px] text-[#a1a1aa]">Execute this plan autonomously with local Ollama Agent Mode</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => onExecutePlan(message.content)}
+                      className="flex items-center gap-1.5 rounded-md bg-sky-600 hover:bg-sky-500 px-3 py-1.5 text-xs font-medium text-white shadow transition-colors shrink-0"
+                    >
+                      <Play size={12} className="fill-current" />
+                      <span>Execute Plan</span>
+                    </button>
+                  </div>
+                )}
 
                 {generatedFiles.length > 1 && (
                   <div className="flex justify-end pt-3">

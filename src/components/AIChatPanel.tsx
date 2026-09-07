@@ -428,6 +428,12 @@ export default function AIChatPanel({
     handleSubmit('Analyze the completed command output and proceed with the next necessary step.', responseText);
   };
 
+  const handleExecutePlan = (planContent: string) => {
+    setIsPlanningMode(false);
+    setIsAgentMode(true);
+    handleSubmit(`Execute the following approved implementation plan step-by-step using your available agent tools:\n\n${planContent}`);
+  };
+
   const handleClear = () => {
     permissionResolver.current?.('deny');
     permissionResolver.current = null;
@@ -490,6 +496,7 @@ export default function AIChatPanel({
             onApply={handleApply}
             onCopy={handleCopy}
             onCommandResult={handleCommandResult}
+            onExecutePlan={handleExecutePlan}
           />
 
           {(isLoading || completedAgentSteps.length > 0 || agentSummaryMessage) && (
@@ -523,6 +530,7 @@ export default function AIChatPanel({
                   onApply={handleApply}
                   onCopy={handleCopy}
                   onCommandResult={handleCommandResult}
+                  onExecutePlan={handleExecutePlan}
                 />
               )}
 

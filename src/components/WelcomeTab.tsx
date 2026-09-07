@@ -10,6 +10,7 @@ import {
 import { RecentWorkspace } from '../types';
 import { CPP_TEMPLATES } from '../services/cppService';
 import OnyxCodeLogo from './OnyxCodeLogo';
+import { fs } from '../platform/fs';
 
 interface WelcomeTabProps {
   onNewFile: () => Promise<unknown> | void;
@@ -34,7 +35,7 @@ export default function WelcomeTab({
   const [openingRecentPath, setOpeningRecentPath] = useState<string | null>(null);
 
   useEffect(() => {
-    window.fileSystem?.getRecentWorkspaces?.().then(setRecents).catch(() => setRecents([]));
+    fs.getRecentWorkspaces().then((result) => setRecents(result ?? [])).catch(() => setRecents([]));
   }, []);
 
   const actions = [

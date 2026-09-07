@@ -25,6 +25,7 @@ import RunDebugView from './RunDebugView';
 import ExtensionsView from './ExtensionsView';
 import { ViewType } from './ActivityBar';
 import { FileNode, OpenFile } from '../types';
+import { fs } from '../platform/fs';
 
 const MENU_ID = 'sidebar-context-menu';
 
@@ -47,8 +48,11 @@ interface SidebarProps {
   onSearchQueryChange: (query: string) => void;
   onRunCode?: () => void;
   onStopCode?: () => void;
+  onBuildCpp?: () => void;
+  onOpenCompilerConfig?: () => void;
   runState?: 'idle' | 'running' | 'stopped' | 'error';
   activeFile?: OpenFile;
+  onOpenGitDiff?: (filePath: string) => void;
 }
 
 export default function Sidebar({
@@ -67,11 +71,13 @@ export default function Sidebar({
   onCreateFile,
   onCreateFolder,
   searchQuery,
-  onSearchQueryChange,
   onRunCode,
   onStopCode,
+  onBuildCpp,
+  onOpenCompilerConfig,
   runState = 'idle',
   activeFile,
+  onOpenGitDiff,
 }: SidebarProps) {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [creation, setCreation] = useState<{ type: 'file' | 'folder'; value: string; error: string } | null>(null);
@@ -106,7 +112,7 @@ export default function Sidebar({
     const delayDebounceFn = setTimeout(async () => {
       setIsSearching(true);
       try {
-        const results = (await window.fileSystem?.searchFiles?.(searchQuery)) || [];
+        const results = (await fs.searchFiles(searchQuery)) || [];
         setSearchResults(results);
       } catch (e) {
         console.error(e);
@@ -298,33 +304,56 @@ export default function Sidebar({
   };
 
   return (
-    <div className="workbench-sidebar relative flex shrink-0 flex-col overflow-hidden border-r border-[#27272a] bg-[#18181b] font-sans text-xs select-none" style={{ width }}>
+    <div className="workbench-sidebar relative flex shrink-0 flex-col overflow-hidden border-r border-[var(--border-color,#27272a)] bg-[var(--sidebar-bg,#18181b)] font-sans text-xs select-none" style={{ width }}>
       {/* View Title */}
       {activeView === 'explorer' && (
-        <div className="flex h-9 items-center justify-between px-3 text-[11px] font-semibold uppercase tracking-wider text-[#bbbbbb]">
+        <div className="flex h-[35px] items-center justify-between px-3 text-[11px] font-semibold uppercase tracking-wider text-[#bbbbbb] border-b border-[var(--border-color,#27272a)]">
           <span>Explorer</span>
-            <div className="flex items-center gap-1 text-[#858585]">
-              <button
-                type="button"
-                onClick={() => rootPath ? setCreation({ type: 'file', value: '', error: '' }) : onCreateFile?.()}
-                className="rounded p-1 hover:bg-[#27272a] hover:text-white"
-                title="New File"
-              >
-                <FilePlus size={14} />
-              </button>
-              <button type="button" onClick={() => setCreation({ type: 'folder', value: '', error: '' })} disabled={!rootPath} className="rounded p-1 hover:bg-[#27272a] hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent" title={rootPath ? 'New Folder' : 'Open a folder before creating a subfolder'}>
-                <FolderPlus size={14} />
-              </button>
-              <button type="button" onClick={() => onOpenFolder()} className="rounded p-1 hover:bg-[#27272a] hover:text-white" title="Open Folder">
-                <FolderOpen size={14} />
-              </button>
-              <button type="button" onClick={refreshExplorer} disabled={!rootPath || isRefreshing} className="rounded p-1 hover:bg-[#27272a] hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent" title="Refresh Explorer">
-                <RefreshCw size={13} className={isRefreshing ? 'animate-spin' : ''} />
-              </button>
-              <button type="button" onClick={handleCollapseAll} disabled={!rootPath} className="rounded p-1 hover:bg-[#27272a] hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent" title="Collapse Folders in Explorer">
-                <MinusSquare size={13} />
-              </button>
-            </div>
+          <div className="flex items-center gap-0.5 text-[#858585]">
+            <button
+              type="button"
+              onClick={() => rootPath ? setCreation({ type: 'file', value: '', error: '' }) : onCreateFile?.()}
+              className="flex h-6 w-6 items-center justify-center rounded-sm hover:bg-[#2a2d2e] hover:text-white"
+              title="New File..."
+            >
+              <FilePlus size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setCreation({ type: 'folder', value: '', error: '' })}
+              disabled={!rootPath}
+              className="flex h-6 w-6 items-center justify-center rounded-sm hover:bg-[#2a2d2e] hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
+              title={rootPath ? 'New Folder...' : 'Open a folder first'}
+            >
+              <FolderPlus size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenFolder()}
+              className="flex h-6 w-6 items-center justify-center rounded-sm hover:bg-[#2a2d2e] hover:text-white"
+              title="Open Folder"
+            >
+              <FolderOpen size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={refreshExplorer}
+              disabled={!rootPath || isRefreshing}
+              className="flex h-6 w-6 items-center justify-center rounded-sm hover:bg-[#2a2d2e] hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
+              title="Refresh Explorer"
+            >
+              <RefreshCw size={13} className={isRefreshing ? 'animate-spin' : ''} />
+            </button>
+            <button
+              type="button"
+              onClick={handleCollapseAll}
+              disabled={!rootPath}
+              className="flex h-6 w-6 items-center justify-center rounded-sm hover:bg-[#2a2d2e] hover:text-white disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent"
+              title="Collapse Folders in Explorer"
+            >
+              <MinusSquare size={13} />
+            </button>
+          </div>
         </div>
       )}
 
@@ -541,7 +570,7 @@ export default function Sidebar({
       )}
 
       {/* Source Control View */}
-      {activeView === 'git' && <GitView />}
+      {activeView === 'git' && <GitView onOpenDiff={onOpenGitDiff} />}
 
       {/* Run & Debug View */}
       {activeView === 'debug' && (
@@ -549,6 +578,8 @@ export default function Sidebar({
           activeFile={activeFile}
           onRunCode={onRunCode || (() => {})}
           onStopCode={onStopCode || (() => {})}
+          onBuildCpp={onBuildCpp}
+          onOpenCompilerConfig={onOpenCompilerConfig}
           runState={runState}
         />
       )}
@@ -582,9 +613,9 @@ export default function Sidebar({
           onClick={({ props }) => {
             if (confirm(`Delete ${props.node.name}?`)) {
               if (props.node.type === 'directory') {
-                window.fileSystem?.deleteFolder(props.node.path).then(onRefresh);
+                fs.deleteFolder(props.node.path).then(onRefresh);
               } else {
-                window.fileSystem?.deleteFile(props.node.path).then(onRefresh);
+                fs.deleteFile(props.node.path).then(onRefresh);
               }
             }
           }}

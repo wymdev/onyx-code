@@ -1,15 +1,20 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Bug,
   ChevronDown,
   ChevronRight,
+  Cpu,
   Play,
   Plus,
+  RefreshCw,
+  Settings2,
   Square,
   Trash2,
   Zap,
 } from 'lucide-react';
-import { OpenFile, RunStatusEvent } from '../types';
+import { OpenFile, RunStatusEvent, ToolchainInfo } from '../types';
+import { runtime } from '../platform/runtime';
+import Checkbox from './ui/Checkbox';
 import {
   Breakpoint,
   getToolchainForFile,
@@ -23,6 +28,7 @@ interface RunDebugViewProps {
   onRunCode: () => void;
   onBuildCpp?: () => void;
   onStopCode: () => void;
+  onOpenCompilerConfig?: () => void;
 }
 
 export default function RunDebugView({
@@ -31,8 +37,27 @@ export default function RunDebugView({
   onRunCode,
   onBuildCpp,
   onStopCode,
+  onOpenCompilerConfig,
 }: RunDebugViewProps) {
   const [selectedConfig, setSelectedConfig] = useState<string>('auto');
+  const [toolchains, setToolchains] = useState<ToolchainInfo[]>([]);
+  const [isScanning, setIsScanning] = useState(false);
+
+  useEffect(() => {
+    loadToolchains();
+  }, []);
+
+  const loadToolchains = async () => {
+    setIsScanning(true);
+    try {
+      const results = await runtime.detectAllToolchains();
+      if (results) setToolchains(results);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsScanning(false);
+    }
+  };
 
   // Collapsible panels
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
@@ -43,18 +68,13 @@ export default function RunDebugView({
     toolchains: false,
   });
 
-  // Watch expressions
-  const [watchExprs, setWatchExprs] = useState<WatchExpression[]>([
-    { id: '1', expression: 'argc', value: '1', type: 'int' },
-    { id: '2', expression: 'n', value: '10', type: 'int' },
-  ]);
+  // Watch expressions - default empty
+  const [watchExprs, setWatchExprs] = useState<WatchExpression[]>([]);
   const [newWatchInput, setNewWatchInput] = useState('');
   const [isAddingWatch, setIsAddingWatch] = useState(false);
 
-  // Breakpoints
-  const [breakpoints, setBreakpoints] = useState<Breakpoint[]>([
-    { id: 'bp-1', filePath: activeFile?.path || 'main.cpp', fileName: activeFile?.name || 'main.cpp', line: 12, enabled: true },
-  ]);
+  // Breakpoints - default empty (not hardcoded)
+  const [breakpoints, setBreakpoints] = useState<Breakpoint[]>([]);
 
   const activeToolchain = activeFile
     ? getToolchainForFile(activeFile.name)
@@ -147,7 +167,7 @@ export default function RunDebugView({
             </>
           )}
 
-          {activeFile && (activeFile.name.endsWith('.cpp') || activeFile.name.endsWith('.c')) && onBuildCpp && (
+          {activeFile && (activeFile.name.endsWith('.cpp') || activeFile.name.endsWith('.c') || activeFile.name.endsWith('.rs') || activeFile.name.endsWith('.go') || activeFile.name.endsWith('.java')) && onBuildCpp && (
             <button
               onClick={onBuildCpp}
               className="flex items-center gap-1 rounded border border-[#333333] bg-[#252526] px-2 py-1 text-xs text-[#38bdf8] hover:border-[#007acc] hover:bg-[#2d2d2d]"
@@ -155,6 +175,16 @@ export default function RunDebugView({
             >
               <Zap size={11} />
               <span>Build</span>
+            </button>
+          )}
+
+          {onOpenCompilerConfig && (
+            <button
+              onClick={onOpenCompilerConfig}
+              className="flex items-center justify-center rounded border border-[#333333] bg-[#252526] p-1.5 text-xs text-[#858585] hover:border-[#007acc] hover:text-white transition-colors"
+              title="Compiler & Build Settings"
+            >
+              <Settings2 size={12} />
             </button>
           )}
         </div>
@@ -292,32 +322,58 @@ export default function RunDebugView({
               {openSections.breakpoints ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
               <span>Breakpoints ({breakpoints.length})</span>
             </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!activeFile) {
+                  alert('Open a file first to add a breakpoint.');
+                  return;
+                }
+                const lineStr = prompt(`Add line breakpoint in ${activeFile.name} (line number):`, '1');
+                const lineNum = parseInt(lineStr || '', 10);
+                if (!isNaN(lineNum) && lineNum > 0) {
+                  setBreakpoints((prev) => [
+                    ...prev,
+                    {
+                      id: `bp-${Date.now()}`,
+                      filePath: activeFile.path,
+                      fileName: activeFile.name,
+                      line: lineNum,
+                      enabled: true,
+                    },
+                  ]);
+                }
+              }}
+              className="p-0.5 hover:text-white transition-colors"
+              title="Add Line Breakpoint"
+            >
+              <Plus size={11} />
+            </button>
           </div>
 
           {openSections.breakpoints && (
             <div className="p-2 space-y-1 bg-[#18181b]/50 text-[11px]">
               {breakpoints.length === 0 ? (
-                <div className="text-[#6e6e6e] italic pl-2">No breakpoints set</div>
+                <div className="text-[#6e6e6e] italic pl-2 py-1">No breakpoints set</div>
               ) : (
                 breakpoints.map((bp) => (
                   <div
                     key={bp.id}
-                    className="flex items-center justify-between rounded px-1.5 py-0.5 hover:bg-[#252526] group"
+                    className="flex items-center justify-between rounded px-1.5 py-1 hover:bg-[#252526] group"
                   >
                     <div className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={bp.enabled}
                         onChange={() => toggleBreakpoint(bp.id)}
-                        className="rounded border-[#444] text-[#007acc] cursor-pointer"
                       />
-                      <span className="font-mono text-white">{bp.fileName}</span>
-                      <span className="font-mono text-[#38bdf8]">:{bp.line}</span>
+                      <span className="font-mono text-white text-xs">{bp.fileName}</span>
+                      <span className="font-mono text-[#38bdf8] text-xs">:{bp.line}</span>
                     </div>
 
                     <button
                       onClick={() => deleteBreakpoint(bp.id)}
-                      className="opacity-0 group-hover:opacity-100 text-[#858585] hover:text-red-400"
+                      className="opacity-0 group-hover:opacity-100 text-[#858585] hover:text-red-400 p-0.5"
+                      title="Remove Breakpoint"
                     >
                       <Trash2 size={11} />
                     </button>
@@ -336,24 +392,71 @@ export default function RunDebugView({
           >
             <div className="flex items-center gap-1">
               {openSections.toolchains ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-              <span>Compilers & Toolchains</span>
+              <span>Compilers & Toolchains ({toolchains.filter((t) => t.available).length || 0})</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  loadToolchains();
+                }}
+                className="p-0.5 hover:text-white"
+                title="Rescan Toolchains"
+              >
+                <RefreshCw size={11} className={isScanning ? 'animate-spin' : ''} />
+              </button>
+              {onOpenCompilerConfig && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenCompilerConfig();
+                  }}
+                  className="p-0.5 hover:text-white"
+                  title="Compiler Settings"
+                >
+                  <Settings2 size={11} />
+                </button>
+              )}
             </div>
           </div>
 
           {openSections.toolchains && (
-            <div className="p-2 space-y-2 bg-[#18181b]/50 text-[11px]">
-              {SUPPORTED_TOOLCHAINS.map((tc) => (
-                <div key={tc.id} className="rounded border border-[#2d2d2d] bg-[#252526] p-2 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-white">{tc.name}</span>
-                    <span className="text-[10px] text-[#38bdf8] font-mono">Ready</span>
+            <div className="p-2 space-y-1.5 bg-[#18181b]/50 text-[11px]">
+              {toolchains.length === 0 ? (
+                <div className="text-[#6e6e6e] italic pl-1">Scanning toolchains...</div>
+              ) : (
+                toolchains.map((tc) => (
+                  <div
+                    key={tc.id}
+                    className={`rounded border p-2 space-y-0.5 ${
+                      tc.available
+                        ? 'border-[#2d3748] bg-[#252526]'
+                        : 'border-[#2d2d2d] bg-[#1e1e1e] opacity-60'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`h-1.5 w-1.5 rounded-full ${
+                            tc.available ? 'bg-emerald-400' : 'bg-zinc-500'
+                          }`}
+                        />
+                        <span className="font-semibold text-white">{tc.name}</span>
+                      </div>
+                      <span
+                        className={`text-[10px] font-mono ${
+                          tc.available ? 'text-emerald-400' : 'text-[#858585]'
+                        }`}
+                      >
+                        {tc.available ? 'Ready' : 'Not Found'}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-[#858585] font-mono truncate">
+                      {tc.available ? tc.version || tc.path || tc.command : `Command: ${tc.command}`}
+                    </div>
                   </div>
-                  <div className="text-[10px] text-[#858585] font-mono">
-                    <div>Compiler: {tc.compiler}</div>
-                    <div>Debugger: {tc.debugger}</div>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           )}
         </div>
