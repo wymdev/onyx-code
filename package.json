@@ -6,10 +6,13 @@
   "scripts": {
     "dev": "concurrently -k \"vite\" \"tsc -w -p electron/tsconfig.json\" \"wait-on tcp:5173 && node scripts/launch-electron.js\"",
     "web:dev": "vite",
-    "build": "vite build && tsc -p electron/tsconfig.json && electron-builder --win",
     "renderer:build": "vite build",
     "electron:dev": "concurrently -k \"vite\" \"tsc -w -p electron/tsconfig.json\" \"wait-on tcp:5173 && node scripts/launch-electron.js\"",
-    "electron:build": "vite build && tsc -p electron/tsconfig.json && electron-builder --win"
+    "build": "npm run build:win",
+    "build:win": "vite build && tsc -p electron/tsconfig.json && electron-builder --win",
+    "build:mac": "vite build && tsc -p electron/tsconfig.json && electron-builder --mac",
+    "build:all": "vite build && tsc -p electron/tsconfig.json && electron-builder -mw",
+    "electron:build": "npm run build:win"
   },
   "author": "Sourabh Nirvani",
   "license": "MIT",
@@ -83,6 +86,41 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Onyx Code"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "public/icon.png",
+      "category": "public.app-category.developer-tools",
+      "identity": null
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     }
   }
 }
